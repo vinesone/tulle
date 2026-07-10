@@ -2,6 +2,8 @@
 
 Shader effects for developers who don't want to write shaders.
 
+**[Live examples →](https://vinesone.github.io/tulle/)**
+
 Tulle runs a chain of WebGL2 post-processing effects over an image, a canvas, or
 a video — and cleans up after itself. No build step, no dependencies, no
 `gl.` calls in your code.
@@ -38,6 +40,7 @@ released. You never call `destroy()`.
 | `vignette` | `amount`, `radius`, `softness` |
 | `grade` | `exposure`, `contrast`, `saturation` |
 | `invert` | `amount` |
+| `lut` | `lut` (texture), `size`, `amount` |
 
 Change a param without recompiling — safe every frame:
 
@@ -139,6 +142,19 @@ tulle.composite([
 tulle.setLayerTransform(1, Transform.identity().scale(0.4).rotate(angle))
 ```
 
+## Colour lookup tables
+
+The `lut` effect grades through a 3D LUT. An effect can declare a `'sampler2D'`
+param and Tulle uploads any image-like value into its own texture unit — LUTs,
+masks, displacement maps. `makeLut()` builds one from a colour function:
+
+```js
+import { makeLut } from 'tulle/effects'
+
+const warm = makeLut(32, (r, g, b) => [r * 1.15 + 0.04, g, b * 0.85])
+tulle.chain([{ name: 'lut', params: { lut: warm } }])
+```
+
 ## Transparency
 
 The canvas is transparent by default, so a source with alpha lets the page show
@@ -166,6 +182,9 @@ for (let i = 0; i < frames; i++) tulle.renderAt(i / 30, video)
 
 ## Examples
 
+Live at **[vinesone.github.io/tulle](https://vinesone.github.io/tulle/)**, or run
+them locally:
+
 ```bash
 npm run dev     # http://localhost:8080/examples/
 ```
@@ -177,6 +196,7 @@ npm run dev     # http://localhost:8080/examples/
 - **composite** — two layers, a blend mode, and a full-render post chain.
 - **transparency** — alpha through the pipeline, over a checkerboard.
 - **layout** — placed, animated picture-in-picture layers via `Transform`.
+- **LUT** — colour grading through lookup tables built with `makeLut()`.
 
 ## License
 

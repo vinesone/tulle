@@ -36,7 +36,7 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node scripts/pool.test.mjs && node scripts/composite.test.mjs && node scripts/transform.test.mjs",
+    "test": "node scripts/pool.test.mjs && node scripts/composite.test.mjs && node scripts/transform.test.mjs && node scripts/effect.test.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
@@ -50,6 +50,6 @@
     "glsl"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }
