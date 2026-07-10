@@ -33,8 +33,13 @@ export class Tulle {
   #emitter = new Emitter()
   #pointer = null
 
+  #mode = 'pipeline' // 'pipeline' (apply/chain) or 'composite'
+
   #pipeline = []   // [{ name, params }] — descriptors
   #passes   = null // compiled Effect instances; null means stale
+
+  #layerDescriptors = [] // normalised layer descriptors for composite()
+  #layers           = null // compiled layers; null means stale
 
   #running   = false
   #raf       = null
@@ -80,8 +85,9 @@ export class Tulle {
       this.#emitter.emit('contextlost')
     })
     this.#scope.listen(canvas, 'webglcontextrestored', () => {
-      this.#invalidate()      // programs are dead — force a recompile
-      this.#renderer.reset()  // textures and framebuffers are dead too
+      this.#invalidate()       // pipeline programs are dead — force a recompile
+      this.#invalidateLayers() // composite programs too
+      this.#renderer.reset()   // textures and framebuffers are dead too
       this.#emitter.emit('contextrestored')
     })
   }
@@ -150,6 +156,7 @@ export class Tulle {
    * @param {object} [params]
    */
   apply(name, params = {}) {
+    this.#mode = 'pipeline'
     this.#pipeline = [{ name, params }]
     this.#invalidate()
     return this
@@ -161,10 +168,36 @@ export class Tulle {
    * @param {Array<string|{ name: string, params?: object }>} steps
    */
   chain(steps) {
+    this.#mode = 'pipeline'
     this.#pipeline = steps.map(step =>
       typeof step === 'string' ? { name: step, params: {} } : { params: {}, ...step }
     )
     this.#invalidate()
+    return this
+  }
+
+  /**
+   * Composite a stack of layers, each with its own source, effect chain, and
+   * blend. Layers combine bottom to top; the first is the base and its blend is
+   * ignored. In this mode render() ignores its argument — every layer carries
+   * its own source, re-read each frame, so live video composites work.
+   *
+   *   tulle.composite([
+   *     { source: clip,  effects: ['blur'] },
+   *     { source: title, blend: 'screen', opacity: 0.8 },
+   *   ]).start(() => tulle.render())
+   *
+   * @param {Array<{
+   *   source: ImageSource,
+   *   effects?: Array<string|{ name: string, params?: object }>,
+   *   blend?: string,
+   *   opacity?: number,
+   * }>} layers
+   */
+  composite(layers) {
+    this.#mode = 'composite'
+    this.#layerDescriptors = layers.map(normalizeLayer)
+    this.#invalidateLayers()
     return this
   }
 
@@ -183,6 +216,41 @@ export class Tulle {
     return this
   }
 
+  /**
+   * Update a composited layer's blend params (e.g. opacity). No recompile.
+   * @param {number} index — layer position, 0 = base
+   * @param {object} params — blend params, e.g. `{ opacity: 0.5 }`
+   */
+  setLayer(index, params) {
+    const desc = this.#layerDescriptors[index]
+    if (!desc) throw new Error(
+      `Tulle.setLayer: no layer at index ${index} (have ${this.#layerDescriptors.length}).`
+    )
+    desc.blendParams = { ...desc.blendParams, ...params }
+    this.#layers?.[index]?.blend?.setParams(params)
+    return this
+  }
+
+  /**
+   * Update a param on one effect within a composited layer. No recompile.
+   * @param {number} index — layer position, 0 = base
+   * @param {string} name — an effect in that layer's chain
+   * @param {object} params
+   */
+  setLayerEffect(index, name, params) {
+    const desc = this.#layerDescriptors[index]
+    if (!desc) throw new Error(
+      `Tulle.setLayerEffect: no layer at index ${index} (have ${this.#layerDescriptors.length}).`
+    )
+    const step = desc.effects.find(s => s.name === name)
+    if (!step) throw new Error(
+      `Tulle.setLayerEffect: layer ${index} has no effect "${name}".`
+    )
+    Object.assign(step.params, params)
+    this.#layers?.[index]?.passes.find(pass => pass.name === name)?.setParams(params)
+    return this
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   /**
@@ -192,11 +260,19 @@ export class Tulle {
   render(source) {
     this.#assertAlive('render')
 
-    if (this.#pipeline.length === 0)
-      throw new Error('Tulle.render: no pipeline. Call .apply() or .chain() first.')
-
     // Keep the clock moving for callers who render outside start().
     if (!this.#running) this.#time = (performance.now() - this.#origin) / 1000
+
+    if (this.#mode === 'composite') {
+      if (this.#layerDescriptors.length === 0)
+        throw new Error('Tulle.render: no layers. Call .composite() first.')
+      if (!this.#layers) this.#compileLayers()
+      this.#renderer.composite(this.#layers, this.frame)
+      return this
+    }
+
+    if (this.#pipeline.length === 0)
+      throw new Error('Tulle.render: no pipeline. Call .apply() or .chain() first.')
 
     if (!this.#passes) this.#compile()
     this.#renderer.run(source, this.#passes, this.frame)
@@ -298,9 +374,11 @@ export class Tulle {
     this.stop()
     this.#emitter.emit('destroy') // fire while listeners are still attached
     this.#invalidate()
+    this.#invalidateLayers()
     this.#scope.dispose()         // pointer listeners, context listeners, renderer
     this.#emitter.clear()
     this.#pipeline = []
+    this.#layerDescriptors = []
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
@@ -327,14 +405,47 @@ export class Tulle {
   }
 
   #compile() {
-    this.#passes = this.#pipeline.map(({ name, params }) => {
-      const EffectClass = registry.get(name)
-      if (!EffectClass) throw new Error(
-        `Tulle: unknown effect "${name}". Register it first: Tulle.register("${name}", YourEffect)`
-      )
-      const pass = new EffectClass(this.#renderer.gl, params)
-      pass.name = name // so set() can reach this pass without a recompile
-      return pass
+    this.#passes = this.#pipeline.map(({ name, params }) => this.#instantiate(name, params))
+  }
+
+  /** Instantiate one registered effect, tagged with its name for set(). */
+  #instantiate(name, params) {
+    const EffectClass = registry.get(name)
+    if (!EffectClass) throw new Error(
+      `Tulle: unknown effect "${name}". Register it first: Tulle.register("${name}", YourEffect)`
+    )
+    const pass = new EffectClass(this.#renderer.gl, params)
+    pass.name = name // so set() can reach this pass without a recompile
+    return pass
+  }
+
+  #invalidateLayers() {
+    this.#layers?.forEach(layer => {
+      layer.passes.forEach(pass => pass.destroy())
+      layer.blend?.destroy()
     })
+    this.#layers = null
+  }
+
+  #compileLayers() {
+    this.#layers = this.#layerDescriptors.map((desc, i) => ({
+      source: desc.source,
+      passes: desc.effects.map(step => this.#instantiate(step.name, step.params)),
+      // The base layer has nothing beneath it, so it carries no blend.
+      blend:  i === 0 ? null : this.#instantiate(desc.blend, desc.blendParams),
+    }))
+  }
+}
+
+/** Normalise a layer descriptor: effects to {name,params}, blend to a name. */
+function normalizeLayer(layer) {
+  const effects = (layer.effects ?? []).map(step =>
+    typeof step === 'string' ? { name: step, params: {} } : { params: {}, ...step }
+  )
+  return {
+    source:      layer.source,
+    effects,
+    blend:       layer.blend ?? 'over',
+    blendParams: { opacity: layer.opacity ?? 1, ...layer.blendParams },
   }
 }

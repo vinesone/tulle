@@ -52,6 +52,18 @@ export interface TulleOptions {
 
 export type PipelineStep = string | { name: string; params?: Record<string, unknown> }
 
+export interface Layer {
+  source: ImageSource
+  /** Effect chain applied to this layer's source before it is blended. */
+  effects?: PipelineStep[]
+  /** Blend mode name for combining onto the layers below. Ignored on the base layer. Default 'over'. */
+  blend?: string
+  /** Upper-layer opacity, 0..1. Default 1. Shorthand for blendParams.opacity. */
+  opacity?: number
+  /** Additional blend params. */
+  blendParams?: Record<string, unknown>
+}
+
 export interface TulleEvents {
   pointermove: PointerState
   pointerdown: PointerState
@@ -140,7 +152,10 @@ export class Tulle {
 
   apply(name: string, params?: Record<string, unknown>): this
   chain(steps: PipelineStep[]): this
+  composite(layers: Layer[]): this
   set(name: string, params: Record<string, unknown>): this
+  setLayer(index: number, params: Record<string, unknown>): this
+  setLayerEffect(index: number, name: string, params: Record<string, unknown>): this
 
   render(source: ImageSource): this
   renderAt(time: number, source: ImageSource): this

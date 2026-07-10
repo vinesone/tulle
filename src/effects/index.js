@@ -1,14 +1,17 @@
 import { ChromaticAberration } from './ChromaticAberration.js'
 import { Blur } from './Blur.js'
 import { Grain } from './Grain.js'
+import { blends } from './Blend.js'
 
 export { ChromaticAberration, Blur, Grain }
+export { Over, Add, Screen, blends, blendNames } from './Blend.js'
 
-/** Canonical registry names for the built-in effects. */
+/** Canonical registry names for the built-in effects, blend modes included. */
 export const builtins = {
   'chromatic-aberration': ChromaticAberration,
   'blur':                 Blur,
   'grain':                Grain,
+  ...blends,
 }
 
 /**

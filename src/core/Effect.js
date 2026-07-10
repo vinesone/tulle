@@ -74,8 +74,11 @@ const BINDERS = {
   mat4:  (gl, loc, v) => gl.uniformMatrix4fv(loc, false, v),
 }
 
-/** Uniforms Tulle supplies to every effect, bound from the frame context. */
-const AUTO_UNIFORMS = ['u_source', 'u_resolution', 'u_time', 'u_delta', 'u_pointer', 'u_pointerDown']
+/**
+ * Uniforms Tulle supplies to every effect, bound from the frame context.
+ * u_source is input 0; u_layer is input 1, used by blends that read two layers.
+ */
+const AUTO_UNIFORMS = ['u_source', 'u_layer', 'u_resolution', 'u_time', 'u_delta', 'u_pointer', 'u_pointerDown']
 
 export class Effect {
   /** @type {string} Vertex source. Defaults to the built-in fullscreen quad. */
@@ -155,20 +158,28 @@ export class Effect {
    * Bind this effect's program and draw a fullscreen quad.
    * Renderer calls this once the destination framebuffer is bound.
    *
-   * @param {WebGLTexture} inputTex — texture to read as u_source
+   * @param {WebGLTexture|WebGLTexture[]} inputs — one texture, or an array. The
+   *   first is bound to u_source, the second (if any) to u_layer. A single
+   *   texture behaves exactly as before, so existing effects are untouched.
    * @param {import('./Tulle.js').FrameContext & {width: number, height: number}} ctx
    */
-  draw(inputTex, ctx) {
+  draw(inputs, ctx) {
     const { gl } = this
     const auto = this.#auto
+    const texes = Array.isArray(inputs) ? inputs : [inputs]
 
     gl.useProgram(this.#program)
     gl.bindVertexArray(this.#vao)
 
-    if (auto.u_source !== null) {
+    if (auto.u_source !== null && texes[0]) {
       gl.activeTexture(gl.TEXTURE0)
-      gl.bindTexture(gl.TEXTURE_2D, inputTex)
+      gl.bindTexture(gl.TEXTURE_2D, texes[0])
       gl.uniform1i(auto.u_source, 0)
+    }
+    if (auto.u_layer !== null && texes[1]) {
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, texes[1])
+      gl.uniform1i(auto.u_layer, 1)
     }
     if (auto.u_resolution !== null) gl.uniform2f(auto.u_resolution, ctx.width, ctx.height)
     if (auto.u_time       !== null) gl.uniform1f(auto.u_time,  ctx.time)

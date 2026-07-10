@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — composite</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <h1>TULLE / composite</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="basic.html">basic</a>
+    <a href="video.html">video</a>
+    <a href="pointer.html">pointer</a>
+    <a href="custom-effect.html">custom effect</a>
+    <a href="composite.html" aria-current="page">composite</a>
+  </nav>
+
+  <p class="note">
+    Two layers, each with its own source and effect chain, combined by a blend
+    mode. The base is a blurred test pattern; the upper layer is animated orbs on
+    a transparent field. This is <code>tulle.composite([...])</code> — the
+    foundation of the layout system.
+  </p>
+
+  <canvas id="canvas" width="600" height="400"></canvas>
+
+  <div class="controls">
+    <div class="card">
+      <header>upper layer</header>
+      <label>blend
+        <select id="blend">
+          <option value="over">over</option>
+          <option value="screen" selected>screen</option>
+          <option value="add">add</option>
+        </select>
+      </label>
+      <label>opacity
+        <input type="range" id="opacity" min="0" max="1" step="0.01" value="1">
+        <output id="opacity-val">1.00</output>
+      </label>
+    </div>
+
+    <div class="card">
+      <header>base layer</header>
+      <label>blur
+        <input type="range" id="blur" min="0" max="16" step="0.5" value="3">
+        <output id="blur-val">3.0</output>
+      </label>
+    </div>
+  </div>
+
+  <div class="status" id="status">screen · two layers</div>
+
+<script src="guard.js"></script>
+
+<script type="module">
+  import { Tulle }            from '../src/index.js'
+  import { registerBuiltins } from '../src/effects/index.js'
+  import { createTestPattern } from './test-pattern.js'
+
+  registerBuiltins(Tulle)   // registers blend modes too
+
+  const $ = id => document.getElementById(id)
+
+  // Base layer: a static test pattern (opaque).
+  const base = createTestPattern(600, 400)
+
+  // Upper layer: redrawn every frame onto a TRANSPARENT canvas, so the blend has
+  // real alpha to work with. Premultiply-on-upload keeps the edges clean.
+  const top = document.createElement('canvas')
+  top.width = 600; top.height = 400
+  const tctx = top.getContext('2d')
+
+  function drawTop(t) {
+    tctx.clearRect(0, 0, top.width, top.height)   // transparent field
+    const orbs = [
+      ['#ff3b3b', 0.0], ['#3ddc84', 2.1], ['#4d7ce5', 4.2],
+    ]
+    for (const [color, phase] of orbs) {
+      const x = 300 + Math.cos(t * 0.6 + phase) * 200
+      const y = 200 + Math.sin(t * 0.9 + phase) * 120
+      const g = tctx.createRadialGradient(x, y, 0, x, y, 110)
+      g.addColorStop(0, color)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      tctx.fillStyle = g
+      tctx.beginPath(); tctx.arc(x, y, 110, 0, Math.PI * 2); tctx.fill()
+    }
+  }
+
+  const tulle = new Tulle($('canvas'), { pointer: false })
+
+  // Rebuild the stack. Called on load and whenever the blend mode changes
+  // (a different mode is a different shader program, so it must recompile).
+  function build() {
+    tulle.composite([
+      { source: base, effects: [{ name: 'blur', params: { radius: +$('blur').value } }] },
+      { source: top,  blend: $('blend').value, opacity: +$('opacity').value },
+    ])
+  }
+  build()
+
+  tulle.start(({ time }) => { drawTop(time); tulle.render() })
+
+  // Opacity is a live blend param on the upper layer — no recompile.
+  $('opacity').addEventListener('input', () => {
+    const v = +$('opacity').value
+    $('opacity-val').textContent = v.toFixed(2)
+    tulle.setLayer(1, { opacity: v })
+  })
+
+  // Blur is a live effect param on the base layer — no recompile.
+  $('blur').addEventListener('input', () => {
+    const v = +$('blur').value
+    $('blur-val').textContent = v.toFixed(1)
+    tulle.setLayerEffect(0, 'blur', { radius: v })
+  })
+
+  // A different blend mode is a different shader, so switching it rebuilds.
+  // build() reads the current opacity and blur, so nothing is lost.
+  $('blend').addEventListener('change', () => {
+    build()
+    $('status').textContent = `${$('blend').value} · two layers`
+  })
+</script>
+
+</body>
+</html>
