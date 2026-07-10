@@ -1,15 +1,20 @@
+import { FramebufferPool } from './FramebufferPool.js'
+
 /**
- * Renderer — owns the GPU-side plumbing: the source texture, the ping-pong
- * framebuffer pair, and the pass loop. Tulle never exposes this class.
+ * Renderer — owns the GPU-side plumbing: the source texture, the framebuffer
+ * pool, and the pass loop. Tulle never exposes this class.
+ *
+ * A linear chain acquires one intermediate buffer per pass and releases the
+ * previous one as soon as it has been read, so at most two buffers are ever live
+ * at once — pixel-identical to the ping-pong pair this replaced. The pool exists
+ * so a future composition tree can hold more than two buffers alive when it must.
  */
 export class Renderer {
   /** @type {WebGL2RenderingContext} */
   gl
 
-  // Ping-pong pair — reused every frame, reallocated on resize.
-  #fboA = null; #texA = null
-  #fboB = null; #texB = null
-  #fboWidth = 0; #fboHeight = 0
+  /** @type {FramebufferPool} */
+  #pool
 
   // Source texture — overwritten each run().
   #sourceTex = null
@@ -17,6 +22,7 @@ export class Renderer {
   /** @param {WebGL2RenderingContext} gl */
   constructor(gl) {
     this.gl = gl
+    this.#pool = new FramebufferPool(gl)
     this.#sourceTex = this.#makeTexture()
   }
 
@@ -48,23 +54,36 @@ export class Renderer {
       return
     }
 
-    // ── Multi-pass: ping-pong between two framebuffers ─────────────────────
-    this.#ensureFBOs(w, h)
-
-    const fbos = [this.#fboA, this.#fboB]
-    const texs = [this.#texA, this.#texB]
+    // ── Multi-pass: acquire → draw → release the consumed input ─────────────
+    // `input` is the pool buffer feeding the current pass, or null while the
+    // source texture is the input. Each pass acquires its output *before*
+    // releasing its input, so acquire never hands back the buffer being read —
+    // the same no-aliasing guarantee the ping-pong pair gave.
     let readTex = this.#sourceTex
+    let input   = null
 
     for (let i = 0; i < passes.length; i++) {
       const isLast = i === passes.length - 1
 
-      // Pass i writes fbo[i % 2] and reads what pass i-1 wrote. Never the same
-      // texture, so there is no read/write aliasing.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, isLast ? null : fbos[i % 2])
+      let output = null
+      if (isLast) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      } else {
+        output = this.#pool.acquire(w, h)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, output.fbo)
+      }
+
       gl.viewport(0, 0, w, h)
+      if (input) this.#pool.assertLive(input) // read guard: catch use-after-free
       passes[i].draw(readTex, frame)
 
-      if (!isLast) readTex = texs[i % 2]
+      // The input has now been consumed; hand it back for reuse.
+      if (input) this.#pool.release(input)
+
+      if (!isLast) {
+        readTex = output.tex
+        input   = output
+      }
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
@@ -75,7 +94,7 @@ export class Renderer {
    * Called after `webglcontextrestored`, when all previous handles are dead.
    */
   reset() {
-    this.#teardownFBOs()
+    this.#pool.dispose()
     this.#sourceTex = this.#makeTexture()
   }
 
@@ -83,7 +102,7 @@ export class Renderer {
   destroy() {
     const gl = this.gl
     if (this.#sourceTex) { gl.deleteTexture(this.#sourceTex); this.#sourceTex = null }
-    this.#teardownFBOs()
+    this.#pool.dispose()
   }
 
   /**
@@ -102,38 +121,6 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, null)
   }
 
-  /** Allocate or reallocate the ping-pong pair when the canvas size changes. */
-  #ensureFBOs(w, h) {
-    if (this.#fboWidth === w && this.#fboHeight === h && this.#fboA) return
-    this.#teardownFBOs()
-    ;[this.#fboA, this.#texA] = this.#makeFBO(w, h)
-    ;[this.#fboB, this.#texB] = this.#makeFBO(w, h)
-    this.#fboWidth  = w
-    this.#fboHeight = h
-  }
-
-  /** @returns {[WebGLFramebuffer, WebGLTexture]} */
-  #makeFBO(w, h) {
-    const gl  = this.gl
-    const tex = this.#makeTexture()
-
-    gl.bindTexture(gl.TEXTURE_2D, tex)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
-
-    const fbo = gl.createFramebuffer()
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
-
-    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
-    if (status !== gl.FRAMEBUFFER_COMPLETE)
-      throw new Error(`Tulle: framebuffer incomplete — 0x${status.toString(16)}`)
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    gl.bindTexture(gl.TEXTURE_2D, null)
-
-    return [fbo, tex]
-  }
-
   /** Shared texture defaults — no mipmaps, clamp to edge. */
   #makeTexture() {
     const gl  = this.gl
@@ -145,14 +132,5 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.bindTexture(gl.TEXTURE_2D, null)
     return tex
-  }
-
-  #teardownFBOs() {
-    const gl = this.gl
-    if (this.#fboA) { gl.deleteFramebuffer(this.#fboA); this.#fboA = null }
-    if (this.#fboB) { gl.deleteFramebuffer(this.#fboB); this.#fboB = null }
-    if (this.#texA) { gl.deleteTexture(this.#texA);     this.#texA = null }
-    if (this.#texB) { gl.deleteTexture(this.#texB);     this.#texB = null }
-    this.#fboWidth = this.#fboHeight = 0
   }
 }

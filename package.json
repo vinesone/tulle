@@ -36,7 +36,8 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
-    "prepublishOnly": "npm run check"
+    "test": "node scripts/pool.test.mjs",
+    "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
     "webgl",
