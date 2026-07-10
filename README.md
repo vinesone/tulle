@@ -123,8 +123,13 @@ for (let i = 0; i < frames; i++) tulle.renderAt(i / 30, video)
 ## Examples
 
 ```bash
-npm run dev     # http://localhost:8080/examples/basic.html
+npm run dev     # http://localhost:8080/examples/
 ```
+
+- **basic** — the three built-in effects, toggled and tuned live.
+- **video** — a video element as the source, driven by `start()`.
+- **pointer** — the same pointer state read from a shader and from JavaScript.
+- **custom effect** — vignette and pixelate, defined in the page.
 
 ## License
 

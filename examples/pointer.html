@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — pointer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <h1>TULLE / pointer</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="basic.html">basic</a>
+    <a href="video.html">video</a>
+    <a href="pointer.html" aria-current="page">pointer</a>
+    <a href="custom-effect.html">custom effect</a>
+  </nav>
+
+  <p class="note">
+    Pointer state reaches an effect two ways. Move the cursor over either canvas;
+    hold the button down to widen the spotlight.
+  </p>
+
+  <div class="pair">
+    <figure>
+      <canvas id="shader-canvas" width="380" height="300"></canvas>
+      <figcaption>
+        <b>From the shader.</b> The effect declares <code>uniform vec2 u_pointer</code>
+        and Tulle binds it. No per-frame JavaScript.
+      </figcaption>
+    </figure>
+
+    <figure>
+      <canvas id="js-canvas" width="380" height="300"></canvas>
+      <figcaption>
+        <b>From JavaScript.</b> A <code>pointermove</code> listener calls
+        <code>tulle.set()</code>. Blur radius tracks the cursor's x position.
+      </figcaption>
+    </figure>
+  </div>
+
+  <div class="status" id="status">pointer: —</div>
+
+<script src="guard.js"></script>
+
+<script type="module">
+  import { Tulle, Effect }     from '../src/index.js'
+  import { registerBuiltins }  from '../src/effects/index.js'
+  import { createTestPattern } from './test-pattern.js'
+
+  registerBuiltins(Tulle)
+
+  const source = createTestPattern(380, 300)
+
+  // ── 1. Pointer read directly by the shader ────────────────────────────────
+  // u_pointer and u_pointerDown are in AUTO_UNIFORMS: declare them and Tulle
+  // binds them every frame. Nothing below wires them up.
+  class Spotlight extends Effect {
+    static fragSrc = /* glsl */`#version 300 es
+      precision highp float;
+      in  vec2 vUv;
+      out vec4 fragColor;
+
+      uniform sampler2D u_source;
+      uniform vec2      u_resolution;
+      uniform vec2      u_pointer;
+      uniform bool      u_pointerDown;
+      uniform float     radius;
+      uniform float     softness;
+
+      void main() {
+        vec4 src = texture(u_source, vUv);
+
+        // Circular in pixels, not in UV — otherwise a non-square canvas
+        // stretches the spotlight into an ellipse.
+        vec2 d = vUv - u_pointer;
+        d.x *= u_resolution.x / u_resolution.y;
+
+        float r    = u_pointerDown ? radius * 1.6 : radius;
+        float mask = 1.0 - smoothstep(r, r + softness, length(d));
+
+        fragColor = vec4(mix(src.rgb * 0.12, src.rgb, mask), src.a);
+      }
+    `
+    static defaults = { radius: 0.18, softness: 0.15 }
+    static uniforms = { radius: 'float', softness: 'float' }
+  }
+
+  Tulle.register('spotlight', Spotlight)
+
+  const shaderTulle = new Tulle(document.getElementById('shader-canvas'))
+  shaderTulle.chain(['spotlight', 'grain'])
+             .start(() => shaderTulle.render(source))
+
+  // ── 2. Pointer read by JavaScript ─────────────────────────────────────────
+  const jsTulle = new Tulle(document.getElementById('js-canvas'))
+  jsTulle.chain([{ name: 'blur', params: { radius: 0 } }])
+         .start(() => jsTulle.render(source))
+
+  // set() pushes a uniform without recompiling, so this is safe at pointer rate.
+  jsTulle.on('pointermove', p => jsTulle.set('blur', { radius: p.u * 16 }))
+
+  // Leaving the canvas should settle back to a clean image rather than freezing
+  // at whatever radius the cursor happened to exit at.
+  jsTulle.on('pointerleave', () => jsTulle.set('blur', { radius: 0 }))
+
+  // ── Readout ───────────────────────────────────────────────────────────────
+  const statusEl = document.getElementById('status')
+  const report = p => {
+    statusEl.textContent =
+      `u ${p.u.toFixed(3)}   v ${p.v.toFixed(3)}   ` +
+      `down ${p.down}   inside ${p.inside}`
+  }
+  shaderTulle.on('pointermove', report)
+  shaderTulle.on('pointerdown', report)
+  shaderTulle.on('pointerup',   report)
+  jsTulle.on('pointermove', report)
+</script>
+
+</body>
+</html>

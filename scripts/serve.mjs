@@ -5,10 +5,10 @@
  * subject to CORS — over file:// the page origin is `null` and Chrome refuses
  * to load them. So the examples must be served over http://, even locally.
  *
- *   npm run dev   →   http://localhost:8080/examples/basic.html
+ *   npm run dev   →   http://localhost:8080/examples/
  */
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { extname, normalize, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,7 +30,7 @@ const server = createServer(async (req, res) => {
   // Strip query/hash, then normalize away any ../ before joining to ROOT.
   const raw = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
   const rel = normalize(raw).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '')
-  const path = join(ROOT, rel || 'examples/basic.html')
+  let path = join(ROOT, rel || 'examples/index.html')
 
   if (!path.startsWith(ROOT)) {
     res.writeHead(403).end('Forbidden')
@@ -38,6 +38,9 @@ const server = createServer(async (req, res) => {
   }
 
   try {
+    // `/examples/` should serve its index rather than EISDIR into a 404.
+    if ((await stat(path)).isDirectory()) path = join(path, 'index.html')
+
     const body = await readFile(path)
     res.writeHead(200, {
       'Content-Type': MIME[extname(path)] ?? 'application/octet-stream',
@@ -50,5 +53,5 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`\n  Tulle dev server\n  → http://localhost:${PORT}/examples/basic.html\n`)
+  console.log(`\n  Tulle dev server\n  → http://localhost:${PORT}/examples/\n`)
 })

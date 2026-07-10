@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tulle — effect chain</title>
+  <link rel="stylesheet" href="style.css">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0 }
 
@@ -91,6 +92,14 @@
 <body>
 
   <h1>TULLE / effect chain</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="basic.html" aria-current="page">basic</a>
+    <a href="video.html">video</a>
+    <a href="pointer.html">pointer</a>
+    <a href="custom-effect.html">custom effect</a>
+  </nav>
 
   <canvas id="canvas" width="600" height="400"></canvas>
 
@@ -189,12 +198,10 @@
     {
       name: 'grain',
       toggle: $('grain-on'),
-      // `time` is advanced per-frame in the render loop, not read from the DOM.
       params: () => ({
         amount:  +$('grain-amount').value,
         size:    +$('grain-size').value,
         colored: $('grain-colored').checked,
-        time:    0,
       }),
     },
     {
@@ -280,10 +287,6 @@
   let source = srcCanvas
 
   function renderFrame(t = 0) {
-    // Grain has no internal clock — hold `time` still and it freezes into a
-    // static dither pattern, so advance it every frame.
-    update('grain', { time: t * 0.001 })
-
     if ($('ca-animate').checked) {
       const spread = Math.max(0, 0.005 + Math.sin(t * 0.001) * 0.04)
       $('ca-spread').value = spread
