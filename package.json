@@ -5,6 +5,12 @@
   "type": "module",
   "license": "MIT",
   "author": "Alan Siegler",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinesone/tulle.git"
+  },
+  "homepage": "https://github.com/vinesone/tulle#readme",
+  "bugs": "https://github.com/vinesone/tulle/issues",
   "sideEffects": false,
   "types": "./types/index.d.ts",
   "main": "./src/index.js",

@@ -126,11 +126,6 @@ for (let i = 0; i < frames; i++) tulle.renderAt(i / 30, video)
 npm run dev     # http://localhost:8080/examples/basic.html
 ```
 
-## Roadmap
-
-[docs/composition.md](docs/composition.md) — layers, blend modes, transforms,
-and animation, on the way to a browser video compositor.
-
 ## License
 
 MIT
