@@ -116,9 +116,11 @@ export class Renderer {
    * accumulator, the layer being drawn, and the blend's fresh output).
    *
    * @param {Array<{ source: *, passes: import('./Effect.js').Effect[], blend: import('./Effect.js').Effect|null }>} layers
+   * @param {import('./Effect.js').Effect[]} post — effects run on the composited
+   *   result before it reaches the canvas. May be empty.
    * @param {import('./Tulle.js').FrameContext} ctx
    */
-  composite(layers, ctx) {
+  composite(layers, post, ctx) {
     const gl = this.gl
     const w  = gl.drawingBufferWidth
     const h  = gl.drawingBufferHeight
@@ -150,18 +152,73 @@ export class Renderer {
 
     if (accum === null) return // no layers — nothing to draw
 
-    // Present the accumulator to the canvas.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    gl.viewport(0, 0, w, h)
-    this.#blit.draw(accum.tex, frame)
-    this.#pool.release(accum)
+    this.#present(accum, post, frame, w, h)
   }
 
   /**
-   * Render one layer — its source through its effect chain — into a pool buffer,
-   * and hand that buffer back live for the caller to consume and release.
+   * Run a post chain over `buf` and draw the result to the canvas, releasing
+   * every buffer it consumes. With no post effects this is a single blit.
+   * Same acquire-before-release discipline as the chain path, so alpha (and
+   * therefore canvas transparency) survives every hop.
+   */
+  #present(buf, post, frame, w, h) {
+    const gl = this.gl
+
+    if (!post || post.length === 0) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.viewport(0, 0, w, h)
+      this.#blit.draw(buf.tex, frame)
+      this.#pool.release(buf)
+      return
+    }
+
+    let readTex = buf.tex
+    let input   = buf
+    for (let i = 0; i < post.length; i++) {
+      const isLast = i === post.length - 1
+
+      let output = null
+      if (isLast) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      } else {
+        output = this.#pool.acquire(w, h)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, output.fbo)
+      }
+
+      gl.viewport(0, 0, w, h)
+      this.#pool.assertLive(input)
+      post[i].draw(readTex, frame)
+      this.#pool.release(input)
+
+      if (!isLast) { readTex = output.tex; input = output }
+    }
+  }
+
+  /**
+   * Render one layer and hand back a live pool buffer. The layer's source runs
+   * through its effect chain fullscreen; then, if the layer has a transform, the
+   * result is placed into a cleared (transparent) buffer at that position, so it
+   * occupies a sub-region and the rest lets lower layers show through.
    */
   #renderLayer(layer, frame, w, h) {
+    const content = this.#renderContent(layer, frame, w, h)
+    if (!layer.transform) return content
+
+    const gl = this.gl
+    const placed = this.#pool.acquire(w, h)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, placed.fbo)
+    gl.viewport(0, 0, w, h)
+    gl.clearColor(0, 0, 0, 0)          // transparent everywhere the quad misses
+    gl.clear(gl.COLOR_BUFFER_BIT)
+
+    this.#pool.assertLive(content)
+    this.#blit.draw(content.tex, { ...frame, transform: layer.transform })
+    this.#pool.release(content)
+    return placed
+  }
+
+  /** Render a layer's source through its effects, fullscreen, into a buffer. */
+  #renderContent(layer, frame, w, h) {
     const gl = this.gl
     this.#upload(this.#sourceTex, layer.source)
 

@@ -48,6 +48,8 @@ export interface TulleOptions {
   pointer?: boolean
   /** Destroy once the canvas has been in the DOM and is then removed. Default true. */
   autoDestroy?: boolean
+  /** Keep the canvas transparent so alpha lets the page show through. Default true. */
+  alpha?: boolean
 }
 
 export type PipelineStep = string | { name: string; params?: Record<string, unknown> }
@@ -62,6 +64,18 @@ export interface Layer {
   opacity?: number
   /** Additional blend params. */
   blendParams?: Record<string, unknown>
+  /** Placement in the frame. Omit for fullscreen. */
+  transform?: Transform | Float32Array | number[]
+}
+
+/** A 2D affine matrix (column-major 3×3) for placing a layer. Clip-space, centre origin. */
+export class Transform {
+  constructor(m?: Float32Array)
+  static identity(): Transform
+  translate(tx: number, ty: number): Transform
+  scale(sx: number, sy?: number): Transform
+  rotate(rad: number): Transform
+  matrix(): Float32Array
 }
 
 export interface TulleEvents {
@@ -153,9 +167,11 @@ export class Tulle {
   apply(name: string, params?: Record<string, unknown>): this
   chain(steps: PipelineStep[]): this
   composite(layers: Layer[]): this
+  post(steps: PipelineStep[]): this
   set(name: string, params: Record<string, unknown>): this
   setLayer(index: number, params: Record<string, unknown>): this
   setLayerEffect(index: number, name: string, params: Record<string, unknown>): this
+  setLayerTransform(index: number, transform: Transform | Float32Array | number[] | null): this
 
   render(source: ImageSource): this
   renderAt(time: number, source: ImageSource): this

@@ -50,13 +50,22 @@ export const FULLSCREEN_VERT = /* glsl */`#version 300 es
     vec2(1.0, 0.0)
   );
 
+  // Placement matrix. Identity for a fullscreen pass; a layer's transform when
+  // the compositor positions it. Bound for every effect, so nothing special is
+  // needed to make an effect placeable.
+  uniform mat3 u_transform;
+
   out vec2 vUv;
 
   void main() {
-    vUv         = UVS[gl_VertexID];
-    gl_Position = vec4(POSITIONS[gl_VertexID], 0.0, 1.0);
+    vUv = UVS[gl_VertexID];
+    vec3 p = u_transform * vec3(POSITIONS[gl_VertexID], 1.0);
+    gl_Position = vec4(p.xy, 0.0, 1.0);
   }
 `
+
+/** Identity placement — bound whenever a pass has no transform of its own. */
+const IDENTITY3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1])
 
 /**
  * Uniform setters by declared type name. This table is the reason effect
@@ -78,7 +87,7 @@ const BINDERS = {
  * Uniforms Tulle supplies to every effect, bound from the frame context.
  * u_source is input 0; u_layer is input 1, used by blends that read two layers.
  */
-const AUTO_UNIFORMS = ['u_source', 'u_layer', 'u_resolution', 'u_time', 'u_delta', 'u_pointer', 'u_pointerDown']
+const AUTO_UNIFORMS = ['u_source', 'u_layer', 'u_transform', 'u_resolution', 'u_time', 'u_delta', 'u_pointer', 'u_pointerDown']
 
 export class Effect {
   /** @type {string} Vertex source. Defaults to the built-in fullscreen quad. */
@@ -181,6 +190,8 @@ export class Effect {
       gl.bindTexture(gl.TEXTURE_2D, texes[1])
       gl.uniform1i(auto.u_layer, 1)
     }
+    if (auto.u_transform !== null)
+      gl.uniformMatrix3fv(auto.u_transform, false, ctx.transform ?? IDENTITY3)
     if (auto.u_resolution !== null) gl.uniform2f(auto.u_resolution, ctx.width, ctx.height)
     if (auto.u_time       !== null) gl.uniform1f(auto.u_time,  ctx.time)
     if (auto.u_delta      !== null) gl.uniform1f(auto.u_delta, ctx.delta)

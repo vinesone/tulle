@@ -49,7 +49,26 @@
       <header><a href="composite.html">composite</a></header>
       <p class="note" style="text-align:left">
         Two layers, each with its own source and effect chain, combined by a
-        blend mode with live opacity. The start of the layout system.
+        blend mode with live opacity, then a full-render post chain
+        (grade + vignette). The start of the layout system.
+      </p>
+    </div>
+
+    <div class="card">
+      <header><a href="transparency.html">transparency</a></header>
+      <p class="note" style="text-align:left">
+        The same source rendered to a transparent canvas and an opaque one, over
+        a checkerboard — proof that alpha survives the pipeline and the page
+        shows through.
+      </p>
+    </div>
+
+    <div class="card">
+      <header><a href="layout.html">layout</a></header>
+      <p class="note" style="text-align:left">
+        A background with two placed, animated picture-in-picture layers, driven
+        by <code>Transform</code> and <code>setLayerTransform()</code>. The
+        arranger, taking shape.
       </p>
     </div>
   </div>

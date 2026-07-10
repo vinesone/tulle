@@ -1,9 +1,12 @@
 import { ChromaticAberration } from './ChromaticAberration.js'
 import { Blur } from './Blur.js'
 import { Grain } from './Grain.js'
+import { Vignette } from './Vignette.js'
+import { Grade } from './Grade.js'
+import { Invert } from './Invert.js'
 import { blends } from './Blend.js'
 
-export { ChromaticAberration, Blur, Grain }
+export { ChromaticAberration, Blur, Grain, Vignette, Grade, Invert }
 export { Over, Add, Screen, blends, blendNames } from './Blend.js'
 
 /** Canonical registry names for the built-in effects, blend modes included. */
@@ -11,6 +14,9 @@ export const builtins = {
   'chromatic-aberration': ChromaticAberration,
   'blur':                 Blur,
   'grain':                Grain,
+  'vignette':             Vignette,
+  'grade':                Grade,
+  'invert':               Invert,
   ...blends,
 }
 

@@ -35,6 +35,9 @@ released. You never call `destroy()`.
 | `blur` | `radius` (px) |
 | `grain` | `amount`, `size`, `speed`, `colored` |
 | `chromatic-aberration` | `spread` |
+| `vignette` | `amount`, `radius`, `softness` |
+| `grade` | `exposure`, `contrast`, `saturation` |
+| `invert` | `amount` |
 
 Change a param without recompiling — safe every frame:
 
@@ -101,6 +104,47 @@ Every shader can read these, bound automatically if you declare them:
 
 Omit `static uniforms` and Tulle infers the type from the default value.
 
+## Compositing layers
+
+Beyond a single source, `composite()` stacks layers — each with its own source,
+effect chain, and blend mode — then `post()` runs a chain over the whole frame.
+
+```js
+tulle.composite([
+  { source: clip,  effects: ['blur'] },
+  { source: title, blend: 'screen', opacity: 0.8 },
+])
+.post(['grade', 'vignette'])
+.start(() => tulle.render())   // each layer carries its own source
+```
+
+Blend modes: `over` `add` `screen`. In this mode `set()` drives the post chain;
+`setLayer(i, params)` and `setLayerEffect(i, name, params)` update a layer live.
+
+## Placing layers
+
+A layer with a `transform` lands somewhere other than fullscreen — the basis of
+a compositor. `Transform` builds the matrix in clip space (centre origin,
+resolution-independent), and `setLayerTransform()` updates it live for animation
+or dragging.
+
+```js
+import { Transform } from 'tulle'
+
+tulle.composite([
+  { source: background },
+  { source: clip, transform: Transform.identity().translate(0.5, 0.5).scale(0.4) },
+])
+
+tulle.setLayerTransform(1, Transform.identity().scale(0.4).rotate(angle))
+```
+
+## Transparency
+
+The canvas is transparent by default, so a source with alpha lets the page show
+through, and every built-in effect preserves it. Pass `{ alpha: false }` for an
+opaque canvas.
+
 ## Deterministic rendering
 
 `renderAt()` pins the clock, so the same time always produces the same pixels.
@@ -130,6 +174,9 @@ npm run dev     # http://localhost:8080/examples/
 - **video** — a video element as the source, driven by `start()`.
 - **pointer** — the same pointer state read from a shader and from JavaScript.
 - **custom effect** — vignette and pixelate, defined in the page.
+- **composite** — two layers, a blend mode, and a full-render post chain.
+- **transparency** — alpha through the pipeline, over a checkerboard.
+- **layout** — placed, animated picture-in-picture layers via `Transform`.
 
 ## License
 

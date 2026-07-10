@@ -1,5 +1,6 @@
 export { Tulle } from './core/Tulle.js'
 export { Effect, FULLSCREEN_VERT } from './core/Effect.js'
+export { Transform } from './core/Transform.js'
 export { Emitter } from './core/Emitter.js'
 export { Scope } from './core/Scope.js'
 export { Pointer } from './core/Pointer.js'

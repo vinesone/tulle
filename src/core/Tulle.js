@@ -3,6 +3,7 @@ import { registry } from './registry.js'
 import { Emitter }  from './Emitter.js'
 import { Scope }    from './Scope.js'
 import { Pointer }  from './Pointer.js'
+import { toMatrix } from './Transform.js'
 
 /**
  * @typedef {object} FrameContext
@@ -41,6 +42,9 @@ export class Tulle {
   #layerDescriptors = [] // normalised layer descriptors for composite()
   #layers           = null // compiled layers; null means stale
 
+  #postDescriptors = [] // [{ name, params }] — post chain over the composite
+  #postPasses      = null // compiled; null means stale
+
   #running   = false
   #raf       = null
   #origin    = 0   // performance.now() at construction
@@ -62,9 +66,14 @@ export class Tulle {
    * @param {boolean} [options.autoDestroy=true] — free everything once the canvas
    *   has been in the DOM and is then removed. Requires a running loop; set false
    *   if you deliberately detach and re-attach the canvas.
+   * @param {boolean} [options.alpha=true] — keep the canvas backing store
+   *   transparent, so a source with alpha lets the page behind it show through.
+   *   Set false for an opaque canvas (a small perf win, no blending with the page).
    */
-  constructor(canvas, { pointer = true, autoDestroy = true } = {}) {
-    const gl = canvas.getContext('webgl2')
+  constructor(canvas, { pointer = true, autoDestroy = true, alpha = true } = {}) {
+    // Tulle's intermediate buffers are premultiplied, so the canvas must be too
+    // — otherwise the browser double-applies alpha when compositing the page.
+    const gl = canvas.getContext('webgl2', { alpha, premultipliedAlpha: true })
     if (!gl) throw new Error('Tulle: WebGL2 is not supported in this browser.')
 
     this.#canvas      = canvas
@@ -87,6 +96,7 @@ export class Tulle {
     this.#scope.listen(canvas, 'webglcontextrestored', () => {
       this.#invalidate()       // pipeline programs are dead — force a recompile
       this.#invalidateLayers() // composite programs too
+      this.#invalidatePost()   // and the post chain
       this.#renderer.reset()   // textures and framebuffers are dead too
       this.#emitter.emit('contextrestored')
     })
@@ -202,11 +212,40 @@ export class Tulle {
   }
 
   /**
+   * Set the post-processing chain applied to the whole composited frame, after
+   * all layers are combined and before it reaches the canvas. Only meaningful in
+   * composite mode. Each step is a name or `{ name, params }`, as with chain().
+   *
+   *   tulle.composite(layers).post(['grade', 'vignette', 'grain'])
+   *
+   * In composite mode, set() targets this chain.
+   * @param {Array<string|{ name: string, params?: object }>} steps
+   */
+  post(steps) {
+    this.#postDescriptors = steps.map(step =>
+      typeof step === 'string' ? { name: step, params: {} } : { params: {}, ...step }
+    )
+    this.#invalidatePost()
+    return this
+  }
+
+  /**
    * Update params on a live pipeline step. No recompile — safe in a render loop.
    * @param {string} name — must already be in the pipeline
    * @param {object} params
    */
   set(name, params) {
+    // In composite mode, set() drives the post chain — the pipeline is unused.
+    if (this.#mode === 'composite') {
+      const step = this.#postDescriptors.find(s => s.name === name)
+      if (!step) throw new Error(
+        `Tulle.set: "${name}" is not in the post chain (${this.#postDescriptors.map(s => s.name).join(', ') || 'empty'}). Use setLayer/setLayerEffect for per-layer params.`
+      )
+      Object.assign(step.params, params)
+      this.#postPasses?.find(pass => pass.name === name)?.setParams(params)
+      return this
+    }
+
     const step = this.#pipeline.find(s => s.name === name)
     if (!step) throw new Error(
       `Tulle.set: "${name}" is not in the current pipeline (${this.pipeline.join(', ') || 'empty'}).`
@@ -251,6 +290,22 @@ export class Tulle {
     return this
   }
 
+  /**
+   * Position a composited layer. No recompile — the renderer reads the transform
+   * each frame, so this is safe to call in a loop for animation or dragging.
+   * @param {number} index — layer position, 0 = base
+   * @param {import('./Transform.js').Transform | Float32Array | number[] | null} transform
+   */
+  setLayerTransform(index, transform) {
+    const desc = this.#layerDescriptors[index]
+    if (!desc) throw new Error(
+      `Tulle.setLayerTransform: no layer at index ${index} (have ${this.#layerDescriptors.length}).`
+    )
+    desc.transform = toMatrix(transform)
+    if (this.#layers?.[index]) this.#layers[index].transform = desc.transform
+    return this
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   /**
@@ -267,7 +322,8 @@ export class Tulle {
       if (this.#layerDescriptors.length === 0)
         throw new Error('Tulle.render: no layers. Call .composite() first.')
       if (!this.#layers) this.#compileLayers()
-      this.#renderer.composite(this.#layers, this.frame)
+      if (!this.#postPasses) this.#compilePost()
+      this.#renderer.composite(this.#layers, this.#postPasses, this.frame)
       return this
     }
 
@@ -375,10 +431,12 @@ export class Tulle {
     this.#emitter.emit('destroy') // fire while listeners are still attached
     this.#invalidate()
     this.#invalidateLayers()
+    this.#invalidatePost()
     this.#scope.dispose()         // pointer listeners, context listeners, renderer
     this.#emitter.clear()
     this.#pipeline = []
     this.#layerDescriptors = []
+    this.#postDescriptors = []
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
@@ -433,7 +491,18 @@ export class Tulle {
       passes: desc.effects.map(step => this.#instantiate(step.name, step.params)),
       // The base layer has nothing beneath it, so it carries no blend.
       blend:  i === 0 ? null : this.#instantiate(desc.blend, desc.blendParams),
+      // Read fresh each frame by the renderer, so setLayerTransform is live.
+      transform: desc.transform,
     }))
+  }
+
+  #invalidatePost() {
+    this.#postPasses?.forEach(pass => pass.destroy())
+    this.#postPasses = null
+  }
+
+  #compilePost() {
+    this.#postPasses = this.#postDescriptors.map(({ name, params }) => this.#instantiate(name, params))
   }
 }
 
@@ -447,5 +516,6 @@ function normalizeLayer(layer) {
     effects,
     blend:       layer.blend ?? 'over',
     blendParams: { opacity: layer.opacity ?? 1, ...layer.blendParams },
+    transform:   toMatrix(layer.transform),
   }
 }
