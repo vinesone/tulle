@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — LUT</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <h1>TULLE / LUT</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="basic.html">basic</a>
+    <a href="video.html">video</a>
+    <a href="pointer.html">pointer</a>
+    <a href="custom-effect.html">custom effect</a>
+    <a href="composite.html">composite</a>
+    <a href="transparency.html">transparency</a>
+    <a href="layout.html">layout</a>
+    <a href="lut.html" aria-current="page">LUT</a>
+  </nav>
+
+  <p class="note">
+    Colour grading through a 3D lookup table. Each preset is built in the browser
+    with <code>makeLut(size, fn)</code> — a function from neutral colour to graded
+    colour — and handed to the <code>lut</code> effect as a texture.
+  </p>
+
+  <canvas id="canvas" width="600" height="400"></canvas>
+
+  <div class="controls">
+    <div class="card">
+      <header>lookup table</header>
+      <label>preset
+        <select id="preset">
+          <option value="identity">identity (none)</option>
+          <option value="warm" selected>warm</option>
+          <option value="cool">cool</option>
+          <option value="sepia">sepia</option>
+          <option value="teal-orange">teal &amp; orange</option>
+          <option value="invert">invert</option>
+        </select>
+      </label>
+      <label>amount
+        <input type="range" id="amount" min="0" max="1" step="0.01" value="1">
+        <output id="amount-val">1.00</output>
+      </label>
+    </div>
+  </div>
+
+  <div class="status" id="status">warm · amount 1.00</div>
+
+<script src="guard.js"></script>
+
+<script type="module">
+  import { Tulle }            from '../src/index.js'
+  import { registerBuiltins, makeLut } from '../src/effects/index.js'
+  import { createTestPattern } from './test-pattern.js'
+
+  registerBuiltins(Tulle)
+
+  const $ = id => document.getElementById(id)
+  const clamp = v => Math.max(0, Math.min(1, v))
+  const luma  = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  // Each preset is a colour-mapping function baked into a LUT once, up front.
+  const SIZE = 32
+  const presets = {
+    identity:      makeLut(SIZE, (r, g, b) => [r, g, b]),
+    warm:          makeLut(SIZE, (r, g, b) => [clamp(r * 1.15 + 0.04), g * 1.02, b * 0.85]),
+    cool:          makeLut(SIZE, (r, g, b) => [r * 0.85, g, clamp(b * 1.15 + 0.04)]),
+    sepia:         makeLut(SIZE, (r, g, b) => { const l = luma(r, g, b); return [l * 1.07, l * 0.74, l * 0.43] }),
+    'teal-orange': makeLut(SIZE, (r, g, b) => {
+      const l = luma(r, g, b)
+      // Push shadows toward teal, highlights toward orange.
+      return [clamp(r + (l - 0.5) * 0.3), g, clamp(b - (l - 0.5) * 0.3)]
+    }),
+    invert:        makeLut(SIZE, (r, g, b) => [1 - r, 1 - g, 1 - b]),
+  }
+
+  const source = createTestPattern(600, 400)
+  const tulle  = new Tulle($('canvas'), { pointer: false })
+
+  tulle.chain([{ name: 'lut', params: { lut: presets.warm, size: SIZE, amount: 1 } }])
+       .start(() => tulle.render(source))
+
+  const status = () => {
+    $('status').textContent = `${$('preset').value} · amount ${(+$('amount').value).toFixed(2)}`
+  }
+
+  // Swapping the LUT is a live sampler swap — the effect re-uploads the new
+  // texture on the next frame, no recompile.
+  $('preset').addEventListener('change', () => {
+    tulle.set('lut', { lut: presets[$('preset').value] })
+    status()
+  })
+
+  $('amount').addEventListener('input', () => {
+    const v = +$('amount').value
+    $('amount-val').textContent = v.toFixed(2)
+    tulle.set('lut', { amount: v })
+    status()
+  })
+</script>
+
+</body>
+</html>

@@ -4,9 +4,11 @@ import { Grain } from './Grain.js'
 import { Vignette } from './Vignette.js'
 import { Grade } from './Grade.js'
 import { Invert } from './Invert.js'
+import { Lut } from './Lut.js'
 import { blends } from './Blend.js'
 
-export { ChromaticAberration, Blur, Grain, Vignette, Grade, Invert }
+export { ChromaticAberration, Blur, Grain, Vignette, Grade, Invert, Lut }
+export { makeLut } from './Lut.js'
 export { Over, Add, Screen, blends, blendNames } from './Blend.js'
 
 /** Canonical registry names for the built-in effects, blend modes included. */
@@ -17,6 +19,7 @@ export const builtins = {
   'vignette':             Vignette,
   'grade':                Grade,
   'invert':               Invert,
+  'lut':                  Lut,
   ...blends,
 }
 

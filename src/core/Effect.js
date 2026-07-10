@@ -129,6 +129,14 @@ export class Effect {
   /** @type {object} live params — defaults merged with caller values */
   #params
 
+  /**
+   * Sampler uniforms declared as 'sampler2D': name → { unit, tex, value }.
+   * Each gets its own texture unit (2+, past u_source and u_layer) and a texture
+   * uploaded from an image-like param — a LUT, a mask, a displacement map.
+   * @type {Map<string, { unit: number, tex: WebGLTexture, value: * }>}
+   */
+  #samplers = new Map()
+
   #destroyed = false
 
   /**
@@ -148,6 +156,13 @@ export class Effect {
 
     for (const key of AUTO_UNIFORMS)
       this.#auto[key] = gl.getUniformLocation(this.#program, key)
+
+    // Reserve a texture unit per declared sampler, past source (0) and layer (1).
+    let unit = 2
+    for (const [name, type] of Object.entries(ctor.uniforms)) {
+      if (type !== 'sampler2D') continue
+      this.#samplers.set(name, { unit: unit++, tex: this.#makeSamplerTexture(), value: undefined })
+    }
   }
 
   /** A detached copy of the live params. */
@@ -202,6 +217,7 @@ export class Effect {
     }
     if (auto.u_pointerDown !== null) gl.uniform1i(auto.u_pointerDown, ctx.pointer?.down ? 1 : 0)
 
+    this.#bindSamplers()
     this.#pushUniforms()
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     gl.bindVertexArray(null)
@@ -213,7 +229,61 @@ export class Effect {
     this.#destroyed = true
     this.gl.deleteProgram(this.#program)
     this.gl.deleteVertexArray(this.#vao)
+    for (const s of this.#samplers.values()) this.gl.deleteTexture(s.tex)
+    this.#samplers.clear()
     this.#locations.clear()
+  }
+
+  /**
+   * Upload changed sampler params and bind each to its texture unit. A sampler
+   * param that is still undefined keeps its 1×1 white fallback, so the unit is
+   * always valid to sample.
+   */
+  #bindSamplers() {
+    const gl = this.gl
+    for (const [name, s] of this.#samplers) {
+      const loc = this.#loc(name)
+      if (loc === null) continue
+
+      const value = this.#params[name]
+      if (value && value !== s.value) {
+        this.#uploadSampler(s.tex, value)
+        s.value = value
+      }
+
+      gl.activeTexture(gl.TEXTURE0 + s.unit)
+      gl.bindTexture(gl.TEXTURE_2D, s.tex)
+      gl.uniform1i(loc, s.unit)
+    }
+  }
+
+  /** A LINEAR/CLAMP texture seeded with one white texel until a value arrives. */
+  #makeSamplerTexture() {
+    const gl  = this.gl
+    const tex = gl.createTexture()
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+      new Uint8Array([255, 255, 255, 255]))
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.bindTexture(gl.TEXTURE_2D, null)
+    return tex
+  }
+
+  /**
+   * Upload an image-like value into a sampler texture as RAW data — no Y-flip,
+   * no premultiply. A LUT is lookup data, not a picture, so it must not be
+   * mangled the way a display source is.
+   */
+  #uploadSampler(tex, source) {
+    const gl = this.gl
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+    gl.bindTexture(gl.TEXTURE_2D, null)
   }
 
   /**
@@ -233,6 +303,8 @@ export class Effect {
     gl.useProgram(this.#program)
 
     for (const [key, value] of Object.entries(this.#params)) {
+      if (this.#samplers.has(key)) continue // textures are bound in #bindSamplers
+
       const loc = this.#loc(key)
       if (loc === null) continue
 

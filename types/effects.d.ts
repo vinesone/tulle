@@ -6,6 +6,13 @@ export class Grain extends Effect {}
 export class Vignette extends Effect {}
 export class Grade extends Effect {}
 export class Invert extends Effect {}
+export class Lut extends Effect {}
+
+/** Build a LUT canvas from a colour-mapping function. Browser only. */
+export function makeLut(
+  size?: number,
+  fn?: (r: number, g: number, b: number) => [number, number, number],
+): HTMLCanvasElement
 
 export class Over extends Effect {}
 export class Add extends Effect {}
