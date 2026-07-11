@@ -1,4 +1,4 @@
-import { Effect } from '../core/Effect.js'
+import { Effect } from '../../core/Effect.js'
 
 /**
  * Vignette — darken toward the corners.

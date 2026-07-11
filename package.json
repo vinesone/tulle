@@ -19,6 +19,10 @@
       "types": "./types/index.d.ts",
       "default": "./src/index.js"
     },
+    "./ready": {
+      "types": "./types/ready.d.ts",
+      "default": "./src/ready.js"
+    },
     "./effects": {
       "types": "./types/effects.d.ts",
       "default": "./src/effects/index.js"
@@ -36,7 +40,7 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node scripts/pool.test.mjs && node scripts/composite.test.mjs && node scripts/transform.test.mjs && node scripts/effect.test.mjs",
+    "test": "node scripts/pool.test.mjs && node scripts/composite.test.mjs && node scripts/transform.test.mjs && node scripts/effect.test.mjs && node scripts/text.test.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — explode</title>
+  <link rel="stylesheet" href="styles/style.css">
+  <style>
+    #canvas { cursor: pointer }
+  </style>
+</head>
+<body>
+
+  <h1>TULLE / explode</h1>
+
+<nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html" aria-current="page">explode</a>
+    <a href="custom-effect.html">custom effect</a>
+  </nav>
+
+  <p class="note">
+    Text is a layer source, so a custom effect distorts it like any other. Roll
+    over the word, then <strong>click to melt &amp; explode it</strong> — click
+    again and it eases back together. One <code>progress</code> uniform, toggled
+    on click and eased in the loop with <code>setLayerEffect()</code>; the reverse
+    is free because every term returns to identity at zero.
+  </p>
+
+  <canvas id="canvas" width="640" height="420"></canvas>
+
+  <div class="controls">
+    <div class="card">
+      <header>shatter</header>
+      <label>explode force
+        <input type="range" id="blast" min="0.1" max="1.2" step="0.02" value="0.55">
+        <output id="blast-val">0.55</output>
+      </label>
+      <label>fragments
+        <input type="range" id="cells" min="6" max="48" step="1" value="22">
+        <output id="cells-val">22</output>
+      </label>
+      <label>melt
+        <input type="range" id="drip" min="0" max="0.6" step="0.01" value="0.25">
+        <output id="drip-val">0.25</output>
+      </label>
+      <label>word
+        <input type="text" id="word" value="EXPLODE" style="flex:1; background:#141414; border:1px solid #333; color:#ccc; font:inherit; padding:4px 8px">
+      </label>
+    </div>
+  </div>
+
+  <div class="status" id="status">intact — click the canvas</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle } from '../src/ready.js'
+
+  // `shatter` is a built-in effect now — a gather-style displacement that melts
+  // then explodes its source, driven by one `progress` uniform. See
+  // src/effects/Shatter.js. It's on the text layer here, but works on any source.
+
+  const $ = id => document.getElementById(id)
+
+  // ── Background: a dark radial field so embers read against it ────────────────
+  function makeBackground(w, h) {
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d')
+    const g = ctx.createRadialGradient(w / 2, h * 0.42, 0, w / 2, h * 0.42, w * 0.8)
+    g.addColorStop(0,   '#20143a')
+    g.addColorStop(0.5, '#100a24')
+    g.addColorStop(1,   '#050308')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+    return c
+  }
+
+  const canvas = $('canvas')
+  const tulle  = new Tulle(canvas) // pointer on by default → u_pointer for the ripple
+
+  const background = makeBackground(640, 420)
+  const title = tulle.text($('word').value, {
+    size:   120,
+    weight: 800,
+    color:  '#ffffff',
+    shadow: { color: 'rgba(0,0,0,0.5)', blur: 18, x: 0, y: 6 },
+  })
+
+  tulle.composite([
+    { source: background },
+    { source: title, effects: [{ name: 'shatter', params: {
+      cells: +$('cells').value, blast: +$('blast').value, drip: +$('drip').value,
+    } }] },
+  ]).post([
+    { name: 'vignette', params: { amount: 0.45 } },
+  ])
+
+  // ── State: click toggles a target; the loop eases toward it ─────────────────
+  let exploded = false
+  let target = 0, progress = 0
+  let hoverTarget = 0, hover = 0
+
+  tulle.on('click', () => {
+    exploded = !exploded
+    target = exploded ? 1 : 0
+  })
+  tulle.on('pointerenter', () => { hoverTarget = 1 })
+  tulle.on('pointerleave', () => { hoverTarget = 0 })
+
+  tulle.start(() => {
+    progress += (target - progress) * 0.09
+    hover    += (hoverTarget - hover) * 0.12
+    tulle.setLayerEffect(1, 'shatter', { progress, hover })
+
+    const pct = Math.round(progress * 100)
+    $('status').textContent = exploded
+      ? (pct > 95 ? 'exploded — click to reassemble' : `detonating… ${pct}%`)
+      : (pct < 5  ? 'intact — click the canvas'      : `reassembling… ${100 - pct}%`)
+
+    tulle.render()
+  })
+
+  // ── Controls ────────────────────────────────────────────────────────────────
+  const slider = (id, digits, param) => $(id).addEventListener('input', () => {
+    const v = +$(id).value
+    $(`${id}-val`).textContent = v.toFixed(digits)
+    tulle.setLayerEffect(1, 'shatter', { [param]: v })
+  })
+  slider('blast', 2, 'blast')
+  slider('cells', 0, 'cells')
+  slider('drip',  2, 'drip')
+
+  $('word').addEventListener('input', () => title.set($('word').value || ' '))
+</script>
+
+</body>
+</html>

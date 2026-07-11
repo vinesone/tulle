@@ -15,38 +15,78 @@ npm install tulle
 ## Quick start
 
 ```js
-import { Tulle } from 'tulle'
-import { registerBuiltins } from 'tulle/effects'
+import { Tulle } from 'tulle/ready'   // batteries in: all effects pre-registered
 
-registerBuiltins(Tulle)
-
-const tulle = new Tulle(canvas)
-
-tulle.chain(['blur', 'grain'])
-     .start(() => tulle.render(video))
+Tulle.mount('#app', { width: 1280, height: 720 })
+     .chain(['blur', 'grain'])
+     .play(video)
 ```
 
-That's the whole lifecycle. `start()` owns the render loop; when the canvas
-leaves the DOM, every shader program, texture, framebuffer, and event listener is
-released. You never call `destroy()`.
+That's the whole lifecycle. `mount()` creates the canvas, `play()` owns the
+render loop, and when the canvas leaves the DOM every shader program, texture,
+framebuffer, and event listener is released. You never call `destroy()`.
+
+Prefer the lean path? Import from `tulle`, register only what you use, and drive
+the loop yourself:
+
+```js
+import { Tulle } from 'tulle'
+import { Blur } from 'tulle/effects/focus/Blur'
+
+Tulle.register('blur', Blur)
+const tulle = new Tulle(document.querySelector('canvas'))
+tulle.chain(['blur']).start(() => tulle.render(video))
+```
 
 ## Effects
 
-| Name | Params |
-|---|---|
-| `blur` | `radius` (px) |
-| `grain` | `amount`, `size`, `speed`, `colored` |
-| `chromatic-aberration` | `spread` |
-| `vignette` | `amount`, `radius`, `softness` |
-| `grade` | `exposure`, `contrast`, `saturation` |
-| `invert` | `amount` |
-| `lut` | `lut` (texture), `size`, `amount` |
+Effects are grouped by family under `src/effects/` — `color/`, `focus/`,
+`film/`, `distort/`, `stylize/`, `blend/`.
+
+| Family | Name | Params |
+|---|---|---|
+| color | `grade` | `exposure`, `contrast`, `saturation` |
+| color | `invert` | `amount` |
+| color | `lut` | `lut` (texture), `size`, `amount` |
+| color | `duotone` | `dark`, `light`, `amount` |
+| focus | `blur` | `radius` (px) |
+| focus | `sharpen` | `amount`, `thickness` |
+| film | `grain` | `amount`, `size`, `speed`, `colored` |
+| film | `vignette` | `amount`, `radius`, `softness` |
+| film | `chromatic-aberration` | `spread` |
+| film | `scanlines` | `count`, `intensity`, `speed` |
+| film | `vhs` | `tracking`, `bleed`, `noise`, `roll`, `wobble`, `desaturate` |
+| distort | `pixelate` | `size` (px) |
+| distort | `ripple` | `center`, `amplitude`, `frequency`, `speed`, `decay` |
+| distort | `shatter` | `progress`, `hover`, `cells`, `blast`, `drip` |
+| distort | `shockwave` | `speed`, `amplitude`, `width`, `decay`, `blasts` |
+| stylize | `posterize` | `levels` |
+| stylize | `threshold` | `level`, `softness`, `low`, `high` |
+| stylize | `edge-detect` | `amount`, `thickness`, `color`, `background` |
+| blend | `over` `add` `screen` | `opacity` |
 
 Change a param without recompiling — safe every frame:
 
 ```js
 tulle.set('blur', { radius: 12 })
 ```
+
+### Animated params
+
+Any param can be a **function of the frame context** instead of a value. It's
+re-evaluated every frame, so animation needs no keyframe system in the core — a
+track, an easing curve, or a spring is just a function you write:
+
+```js
+tulle.chain([
+  { name: 'blur', params: { radius: ({ time }) => 12 + 8 * Math.sin(time * 2) } },
+])
+
+// reach for the pointer, the frame counter, delta — whatever the context carries
+tulle.set('ripple', { center: ({ pointer }) => [pointer.u, pointer.v] })
+```
+
+The context is `{ time, delta, frame, pointer, width, height }`.
 
 ## Reacting to the pointer
 
@@ -142,6 +182,30 @@ tulle.composite([
 tulle.setLayerTransform(1, Transform.identity().scale(0.4).rotate(angle))
 ```
 
+## Text
+
+Type is a layer source. `Text` typesets a styled block into a frame-sized canvas,
+so it composites, blends, takes effects, and moves with a `Transform` like any
+other layer — the core never learns what a glyph is.
+
+```js
+const title = tulle.text('Hello', { size: 96, weight: 700, color: '#ff5470' })
+
+tulle.composite([
+  { source: video },
+  { source: title, blend: 'over', effects: ['blur'] },
+])
+
+title.set('Goodbye')                 // re-typeset; next frame shows it
+title.update({ color: '#ffffff' })   // restyle live
+```
+
+`tulle.text(str, options)` sizes the block to the canvas so it lands undistorted;
+`new Text(str, { width, height, ... })` is the standalone form. Options: `font`,
+`size`, `weight`, `italic`, `color`, `lineHeight`, `letterSpacing`, `align`,
+`vAlign`, `padding`, `maxWidth` (wraps), `background`, `shadow`, `stroke`. Text is
+re-rasterised only when it changes, and it's DPR-aware for crisp glyphs.
+
 ## Colour lookup tables
 
 The `lut` effect grades through a 3D LUT. An effect can declare a `'sampler2D'`
@@ -189,14 +253,12 @@ them locally:
 npm run dev     # http://localhost:8080/examples/
 ```
 
-- **basic** — the three built-in effects, toggled and tuned live.
-- **video** — a video element as the source, driven by `start()`.
-- **pointer** — the same pointer state read from a shader and from JavaScript.
-- **custom effect** — vignette and pixelate, defined in the page.
-- **composite** — two layers, a blend mode, and a full-render post chain.
-- **transparency** — alpha through the pipeline, over a checkerboard.
-- **layout** — placed, animated picture-in-picture layers via `Transform`.
-- **LUT** — colour grading through lookup tables built with `makeLut()`.
+- **playground** — build an effect chain live: swap effects with dropdowns,
+  reorder, tune sliders, switch source (pattern / text / video), load presets.
+- **VHS** — a generated Outrun scene + OSD, composited and run through a layered
+  analog chain with the `vhs` effect. Whack the VCR.
+- **explode** — click to melt and explode the text, click again to reassemble.
+- **custom effect** — write your own: a fragment shader plus a defaults object.
 
 ## License
 

@@ -1,4 +1,4 @@
-import { Effect } from '../core/Effect.js'
+import { Effect } from '../../core/Effect.js'
 
 /**
  * Gaussian blur — single pass, 9×9 taps.

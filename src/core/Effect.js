@@ -218,7 +218,7 @@ export class Effect {
     if (auto.u_pointerDown !== null) gl.uniform1i(auto.u_pointerDown, ctx.pointer?.down ? 1 : 0)
 
     this.#bindSamplers()
-    this.#pushUniforms()
+    this.#pushUniforms(ctx)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     gl.bindVertexArray(null)
   }
@@ -296,17 +296,36 @@ export class Effect {
     return this.#locations.get(key)
   }
 
-  #pushUniforms() {
+  /**
+   * Push params to the GPU. A param may be a plain value, or a function of the
+   * frame context — `radius: ({ time }) => 12 + 8 * Math.sin(time)` — resolved
+   * fresh on every draw. That one line is the whole animation feature: a keyframe
+   * track, an easing curve, or a spring is just a userland function of the
+   * context, and the core never learns what a keyframe is.
+   *
+   * @param {(import('./Tulle.js').FrameContext & {width:number,height:number})} [ctx]
+   *   present on a draw; omitted from setParams, where function params are left
+   *   for the next draw to resolve.
+   */
+  #pushUniforms(ctx) {
     const { gl } = this
     const declared = /** @type {typeof Effect} */ (this.constructor).uniforms
 
     gl.useProgram(this.#program)
 
-    for (const [key, value] of Object.entries(this.#params)) {
+    for (const [key, raw] of Object.entries(this.#params)) {
       if (this.#samplers.has(key)) continue // textures are bound in #bindSamplers
 
       const loc = this.#loc(key)
       if (loc === null) continue
+
+      // A function param is a value-of-time. Resolve it against the frame
+      // context; with no context (setParams) skip it — draw() will bind it.
+      let value = raw
+      if (typeof raw === 'function') {
+        if (!ctx) continue
+        value = raw(ctx)
+      }
 
       const decl = declared[key]
 

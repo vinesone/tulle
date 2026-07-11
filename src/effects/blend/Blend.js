@@ -1,4 +1,4 @@
-import { Effect } from '../core/Effect.js'
+import { Effect } from '../../core/Effect.js'
 
 /**
  * Blend modes — two-input effects that composite an upper layer onto a lower one.

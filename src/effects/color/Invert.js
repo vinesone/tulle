@@ -1,4 +1,4 @@
-import { Effect } from '../core/Effect.js'
+import { Effect } from '../../core/Effect.js'
 
 /**
  * Invert — negate colour, keep alpha.

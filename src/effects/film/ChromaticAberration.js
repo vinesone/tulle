@@ -1,4 +1,4 @@
-import { Effect } from '../core/Effect.js'
+import { Effect } from '../../core/Effect.js'
 
 export class ChromaticAberration extends Effect {
   static fragSrc = /* glsl */`#version 300 es

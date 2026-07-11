@@ -281,13 +281,17 @@ export class Renderer {
    */
   #upload(tex, source) {
     const gl = this.gl
+    // A source may be a raw image-like value, or an object that exposes one via
+    // `texSource` (a Text, and later a layout Surface). Resolve it here so those
+    // primitives drop into a layer with no special handling anywhere else.
+    const img = source?.texSource ?? source
     gl.bindTexture(gl.TEXTURE_2D, tex)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
     // Premultiply so intermediate buffers and blends agree on one convention.
     // A no-op for opaque sources (alpha == 1), so the single-source chain is
     // unchanged; correct for layers that carry transparency.
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
     gl.bindTexture(gl.TEXTURE_2D, null)

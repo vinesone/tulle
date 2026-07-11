@@ -15,7 +15,7 @@ import { Effect } from '../src/core/Effect.js'
 
 function fakeGL() {
   const live = { tex: new Set() }
-  const calls = { texImage2D: [], pixelStorei: [], uniform1i: [] }
+  const calls = { texImage2D: [], pixelStorei: [], uniform1i: [], uniform1f: [] }
   let id = 0
   const real = {
     UNPACK_FLIP_Y_WEBGL: 'FLIP', UNPACK_PREMULTIPLY_ALPHA_WEBGL: 'PREMUL',
@@ -33,7 +33,8 @@ function fakeGL() {
     pixelStorei(k, v) { calls.pixelStorei.push([k, v]) },
     uniform1i(loc, v) { calls.uniform1i.push([loc?.name, v]) },
     texParameteri() {}, bindTexture() {}, useProgram() {}, activeTexture() {},
-    uniform1f() {}, uniform2f() {}, drawArrays() {},
+    uniform1f(loc, v) { calls.uniform1f.push([loc?.name, v]) },
+    uniform2f() {}, drawArrays() {},
     live, calls,
   }
   return new Proxy(real, {
@@ -93,6 +94,39 @@ const lutB = { B: 1 }
   eq(gl.live.tex.size, 0, 'destroy: sampler texture freed')
 }
 
+// ── A function param is resolved against the frame context on every draw ──────
+class Animated extends Effect {
+  static fragSrc = '#version 300 es\nvoid main(){}'
+  static defaults = { amount: 0 }
+  static uniforms = { amount: 'float' }
+}
+{
+  const gl = fakeGL()
+  const fx = new Animated(gl)
+
+  // A param that is a function of ctx.time binds the resolved number, not the fn.
+  fx.setParams({ amount: ({ time }) => time * 2 })
+
+  fx.draw(['t'], { ...frame, time: 1.5 })
+  let bind = gl.calls.uniform1f.filter(([name]) => name === 'amount').pop()
+  eq(bind?.[1], 3, 'function param: resolved with the draw context (t=1.5 → 3)')
+
+  fx.draw(['t'], { ...frame, time: 5 })
+  bind = gl.calls.uniform1f.filter(([name]) => name === 'amount').pop()
+  eq(bind?.[1], 10, 'function param: re-resolved each frame (t=5 → 10)')
+
+  // setParams alone (no context) must not throw trying to bind a function.
+  const before = gl.calls.uniform1f.length
+  fx.setParams({ amount: ({ frame }) => frame })
+  eq(gl.calls.uniform1f.length, before, 'function param: setParams defers binding to draw')
+
+  // A plain number still binds directly.
+  fx.setParams({ amount: 0.25 })
+  fx.draw(['t'], frame)
+  bind = gl.calls.uniform1f.filter(([name]) => name === 'amount').pop()
+  eq(bind?.[1], 0.25, 'plain number param: binds unchanged')
+}
+
 console.log('')
 if (failed) { console.error(`${failed} test(s) failed.`); process.exit(1) }
-console.log('Effect samplers: all tests passed.')
+console.log('Effect samplers + params: all tests passed.')

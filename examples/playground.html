@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — playground</title>
+  <link rel="stylesheet" href="styles/style.css">
+  <style>
+    select, input[type=text] {
+      background: #141414; border: 1px solid #333; color: #ccc; font: inherit; padding: 4px 8px;
+    }
+    .row { border: 1px solid #222; padding: 10px; display: flex; flex-direction: column; gap: 8px }
+    .row > header { display: flex; gap: 6px; align-items: center }
+    .row > header select { flex: 1 }
+    .row .btn { padding: 2px 8px; min-width: 28px }
+    .params { display: flex; flex-direction: column; gap: 6px; padding-left: 4px }
+    .params:empty { display: none }
+    .presets { display: flex; flex-wrap: wrap; gap: 8px }
+    .presets button { flex: 1; min-width: 90px }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+    .toolbar select { flex: 1 }
+    .pipeline { color: #7f5af0; font-size: 0.8em; text-align: center; min-height: 1.3em; word-break: break-word }
+  </style>
+</head>
+<body>
+
+  <h1>TULLE / playground</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html" aria-current="page">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="custom-effect.html">custom effect</a>
+  </nav>
+
+  <p class="note">
+    Build an effect chain live. Swap effects with the dropdowns, reorder them,
+    drag any slider — nothing reloads. Structural edits recompile the chain;
+    param tweaks push a uniform with <code>set()</code>. Try a preset, then take
+    it apart.
+  </p>
+
+  <canvas id="canvas" width="640" height="420"></canvas>
+  <div class="pipeline" id="pipeline"></div>
+
+  <div class="controls">
+    <div class="card">
+      <header>source</header>
+      <div class="toolbar">
+        <select id="source">
+          <option value="pattern">test pattern</option>
+          <option value="text">text</option>
+          <option value="video">video (load a file)</option>
+        </select>
+        <input type="text" id="text-input" value="TULLE" style="display:none">
+        <input type="file" id="file" accept="video/*" style="display:none">
+      </div>
+    </div>
+
+    <div class="card">
+      <header>presets</header>
+      <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="card">
+      <header>effect chain</header>
+      <div id="stack" style="display:flex; flex-direction:column; gap:8px"></div>
+      <button id="add">+ add effect</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle } from '../src/ready.js'
+  import { createTestPattern } from './js/test-pattern.js'
+
+  const $ = id => document.getElementById(id)
+
+  // ── Effect metadata: what controls each effect exposes ───────────────────────
+  // Grouped by family for the dropdown. Each control is a slider, a checkbox, or
+  // a colour — enough to drive every chain-able builtin from the UI.
+  const r = (key, min, max, step, def) => ({ key, type: 'range', min, max, step, def })
+  const c = (key, def) => ({ key, type: 'color', def })
+  const b = (key, def) => ({ key, type: 'bool', def })
+
+  const EFFECTS = {
+    color: {
+      grade:   [r('exposure', 0, 2, 0.01, 1), r('contrast', 0, 2, 0.01, 1), r('saturation', 0, 2, 0.01, 1)],
+      invert:  [r('amount', 0, 1, 0.01, 1)],
+      duotone: [r('amount', 0, 1, 0.01, 1), c('dark', [0.05, 0.03, 0.18]), c('light', [1, 0.78, 0.3])],
+    },
+    focus: {
+      blur:    [r('radius', 0, 20, 0.5, 6)],
+      sharpen: [r('amount', 0, 2, 0.02, 0.6), r('thickness', 1, 3, 0.1, 1)],
+    },
+    film: {
+      grain:                [r('amount', 0, 0.3, 0.005, 0.1), r('size', 1, 6, 1, 1), b('colored', false)],
+      vignette:             [r('amount', 0, 2, 0.02, 0.6)],
+      'chromatic-aberration': [r('spread', 0, 0.08, 0.001, 0.02)],
+      scanlines:            [r('count', 60, 600, 10, 300), r('intensity', 0, 1, 0.02, 0.4), r('speed', 0, 2, 0.02, 0.4)],
+      vhs:                  [r('tracking', 0, 1.5, 0.01, 0.5), r('bleed', 0, 1.5, 0.01, 0.6), r('noise', 0, 1, 0.01, 0.4), r('roll', 0, 1, 0.01, 0.35)],
+    },
+    distort: {
+      pixelate: [r('size', 1, 40, 1, 10)],
+      ripple:   [r('amplitude', 0, 0.05, 0.001, 0.02), r('frequency', 5, 80, 1, 40), r('speed', 0, 12, 0.1, 6)],
+      shatter:  [r('progress', 0, 1, 0.01, 0.4), r('cells', 6, 48, 1, 22), r('blast', 0, 1.2, 0.01, 0.55), r('drip', 0, 0.6, 0.01, 0.25)],
+    },
+    stylize: {
+      posterize:    [r('levels', 2, 12, 1, 5)],
+      threshold:    [r('level', 0, 1, 0.01, 0.5), r('softness', 0, 0.5, 0.01, 0.04), c('low', [0, 0, 0]), c('high', [1, 1, 1])],
+      'edge-detect': [r('amount', 0, 1, 0.01, 1), r('thickness', 0.5, 3, 0.1, 1), c('color', [0.6, 1, 0.9]), c('background', [0.02, 0.03, 0.06])],
+    },
+  }
+
+  const META = Object.fromEntries(Object.values(EFFECTS).flatMap(fam => Object.entries(fam)))
+  const defaultsFor = name => Object.fromEntries(META[name].map(m => [m.key, m.def]))
+
+  const PRESETS = {
+    dreamy:  [['blur', { radius: 4 }], ['grade', { saturation: 1.35, exposure: 1.12 }], ['vignette', { amount: 0.8 }]],
+    comic:   [['posterize', { levels: 4 }], ['edge-detect', { amount: 0.55, color: [0.1, 0.1, 0.1], background: [1, 1, 1] }]],
+    retro:   [['vhs', {}], ['scanlines', { intensity: 0.35 }], ['grade', { saturation: 0.9, contrast: 1.1 }]],
+    glitch:  [['chromatic-aberration', { spread: 0.03 }], ['ripple', { amplitude: 0.015 }], ['grain', { amount: 0.12, colored: true }]],
+  }
+
+  // ── Colour helpers ───────────────────────────────────────────────────────────
+  const toHex = ([r, g, b]) => '#' + [r, g, b].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
+  const toRgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+
+  // ── Source ───────────────────────────────────────────────────────────────────
+  const pattern = createTestPattern(640, 420)
+  const tulle = new Tulle($('canvas'))
+  const title = tulle.text($('text-input').value, { size: 150, weight: 800 })
+  let videoEl = null
+
+  const currentSource = () => {
+    const kind = $('source').value
+    if (kind === 'text')  return title
+    if (kind === 'video' && videoEl) return videoEl
+    return pattern
+  }
+
+  // ── The chain, driven by the UI ──────────────────────────────────────────────
+  let stack = []  // [{ name, params }]
+
+  function rebuild() {
+    const steps = stack.length ? stack.map(s => ({ name: s.name, params: { ...s.params } }))
+                              : [{ name: 'blur', params: { radius: 0 } }]  // identity when empty
+    tulle.chain(steps)
+    $('pipeline').textContent = stack.map(s => s.name).join('  →  ') || '(source, no effects)'
+  }
+
+  // Live param change with no recompile (names are unique in the stack).
+  const pushLive = (name, key, value) => { try { tulle.set(name, { [key]: value }) } catch {} }
+
+  function renderStack() {
+    const host = $('stack')
+    host.textContent = ''
+    stack.forEach((entry, i) => host.appendChild(rowFor(entry, i)))
+  }
+
+  function rowFor(entry, i) {
+    const row = document.createElement('div')
+    row.className = 'row'
+
+    // Effect picker (grouped by family) + reorder / remove.
+    const head = document.createElement('header')
+    const sel = document.createElement('select')
+    for (const [family, effects] of Object.entries(EFFECTS)) {
+      const grp = document.createElement('optgroup'); grp.label = family
+      for (const name of Object.keys(effects)) {
+        const opt = document.createElement('option'); opt.value = name; opt.textContent = name
+        if (name === entry.name) opt.selected = true
+        grp.appendChild(opt)
+      }
+      sel.appendChild(grp)
+    }
+    sel.addEventListener('change', () => {
+      entry.name = sel.value
+      entry.params = defaultsFor(entry.name)
+      renderStack(); rebuild()
+    })
+
+    const mk = (label, fn) => { const btn = document.createElement('button'); btn.className = 'btn'; btn.textContent = label; btn.onclick = fn; return btn }
+    head.append(
+      sel,
+      mk('↑', () => { if (i > 0) { [stack[i-1], stack[i]] = [stack[i], stack[i-1]]; renderStack(); rebuild() } }),
+      mk('↓', () => { if (i < stack.length-1) { [stack[i+1], stack[i]] = [stack[i], stack[i+1]]; renderStack(); rebuild() } }),
+      mk('✕', () => { stack.splice(i, 1); renderStack(); rebuild() }),
+    )
+    row.appendChild(head)
+
+    // Auto-generated param controls.
+    const params = document.createElement('div'); params.className = 'params'
+    for (const m of META[entry.name]) params.appendChild(controlFor(entry, m))
+    row.appendChild(params)
+    return row
+  }
+
+  function controlFor(entry, m) {
+    const label = document.createElement('label')
+
+    if (m.type === 'bool') {
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = !!entry.params[m.key]
+      input.addEventListener('change', () => { entry.params[m.key] = input.checked; pushLive(entry.name, m.key, input.checked) })
+      label.style.justifyContent = 'flex-start'
+      label.append(input, ' ' + m.key)
+      return label
+    }
+
+    label.append(m.key)
+    if (m.type === 'color') {
+      const input = document.createElement('input'); input.type = 'color'; input.value = toHex(entry.params[m.key])
+      input.addEventListener('input', () => { const rgb = toRgb(input.value); entry.params[m.key] = rgb; pushLive(entry.name, m.key, rgb) })
+      label.append(input)
+    } else {
+      const input = document.createElement('input')
+      input.type = 'range'; input.min = m.min; input.max = m.max; input.step = m.step; input.value = entry.params[m.key]
+      const out = document.createElement('output'); out.textContent = (+input.value).toFixed(m.step < 1 ? 2 : 0)
+      input.addEventListener('input', () => {
+        const v = +input.value; entry.params[m.key] = v
+        out.textContent = v.toFixed(m.step < 1 ? 2 : 0)
+        pushLive(entry.name, m.key, v)
+      })
+      label.append(input, out)
+    }
+    return label
+  }
+
+  function loadStack(pairs) {
+    stack = pairs.map(([name, params]) => ({ name, params: { ...defaultsFor(name), ...params } }))
+    renderStack(); rebuild()
+  }
+
+  // ── Wire up ──────────────────────────────────────────────────────────────────
+  $('add').addEventListener('click', () => {
+    const name = Object.keys(META)[0]
+    stack.push({ name, params: defaultsFor(name) })
+    renderStack(); rebuild()
+  })
+
+  const presetBar = $('presets')
+  for (const name of Object.keys(PRESETS)) {
+    const btn = document.createElement('button'); btn.textContent = name
+    btn.onclick = () => loadStack(PRESETS[name])
+    presetBar.appendChild(btn)
+  }
+
+  $('source').addEventListener('change', () => {
+    $('text-input').style.display = $('source').value === 'text' ? '' : 'none'
+    $('file').style.display       = $('source').value === 'video' ? '' : 'none'
+  })
+  $('text-input').addEventListener('input', () => title.set($('text-input').value || ' '))
+  $('file').addEventListener('change', () => {
+    const file = $('file').files[0]; if (!file) return
+    videoEl = document.createElement('video')
+    videoEl.src = URL.createObjectURL(file); videoEl.loop = videoEl.muted = videoEl.playsInline = true; videoEl.play()
+    $('status').textContent = `▶ ${file.name}`
+  })
+
+  loadStack(PRESETS.retro)          // open on something eye-catching
+  tulle.start(() => tulle.render(currentSource()))
+</script>
+
+</body>
+</html>

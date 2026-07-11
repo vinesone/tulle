@@ -4,87 +4,57 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tulle — examples</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="styles/style.css">
 </head>
 <body>
 
   <h1>TULLE / examples</h1>
 
+  <p class="note">
+    WebGL2 effects, composition, text, and animation — no build step, no
+    <code>gl.</code> calls. Start with the playground.
+  </p>
+
   <div class="controls">
     <div class="card">
-      <header><a href="basic.html">basic</a></header>
+      <header><a href="playground.html">playground</a></header>
       <p class="note" style="text-align:left">
-        The three built-in effects over an image or a generated test pattern.
-        Toggle effects to rebuild the pipeline; drag sliders to push uniforms
-        without recompiling.
+        Build an effect chain live — swap effects with dropdowns, reorder them,
+        drag sliders, load a video or type some text. One-click presets, then
+        take them apart. The whole built-in library, hot-swapped with no reload.
       </p>
     </div>
 
     <div class="card">
-      <header><a href="video.html">video</a></header>
+      <header><a href="vhs.html">VHS</a></header>
       <p class="note" style="text-align:left">
-        A video element as the source, driven by <code>start()</code>. Falls back
-        to a synthesised clip so the page works with no file on hand.
+        The wow shot: a generated Outrun scene and an on-screen display,
+        composited and run through a layered analog chain
+        (<code>vhs → scanlines → grade → vignette → grain</code>). Whack the VCR.
       </p>
     </div>
 
     <div class="card">
-      <header><a href="pointer.html">pointer</a></header>
+      <header><a href="explode.html">explode</a></header>
       <p class="note" style="text-align:left">
-        The same pointer state reaching an effect two ways — bound straight into
-        a shader as <code>u_pointer</code>, and read from JavaScript via
-        <code>on('pointermove')</code>.
+        Text is a layer source, so a custom shader distorts it. Click to melt and
+        explode the word, click again to reassemble — one eased
+        <code>progress</code> uniform.
       </p>
     </div>
 
     <div class="card">
       <header><a href="custom-effect.html">custom effect</a></header>
       <p class="note" style="text-align:left">
-        Vignette and pixelate, defined inline. A fragment shader plus a defaults
-        object is the entire extension API.
-      </p>
-    </div>
-
-    <div class="card">
-      <header><a href="composite.html">composite</a></header>
-      <p class="note" style="text-align:left">
-        Two layers, each with its own source and effect chain, combined by a
-        blend mode with live opacity, then a full-render post chain
-        (grade + vignette). The start of the layout system.
-      </p>
-    </div>
-
-    <div class="card">
-      <header><a href="transparency.html">transparency</a></header>
-      <p class="note" style="text-align:left">
-        The same source rendered to a transparent canvas and an opaque one, over
-        a checkerboard — proof that alpha survives the pipeline and the page
-        shows through.
-      </p>
-    </div>
-
-    <div class="card">
-      <header><a href="layout.html">layout</a></header>
-      <p class="note" style="text-align:left">
-        A background with two placed, animated picture-in-picture layers, driven
-        by <code>Transform</code> and <code>setLayerTransform()</code>. The
-        arranger, taking shape.
-      </p>
-    </div>
-
-    <div class="card">
-      <header><a href="lut.html">LUT</a></header>
-      <p class="note" style="text-align:left">
-        Colour grading through a 3D lookup table, built in the browser with
-        <code>makeLut()</code> and applied as a texture — the first effect that
-        samples an auxiliary image.
+        Write your own. A fragment shader plus a defaults object is the entire
+        extension API — two effects defined inline in the page.
       </p>
     </div>
   </div>
 
   <div class="status">served from <code>npm run dev</code></div>
 
-<script src="guard.js"></script>
+<script src="js/guard.js"></script>
 
 </body>
 </html>

@@ -4,6 +4,7 @@ import { Emitter }  from './Emitter.js'
 import { Scope }    from './Scope.js'
 import { Pointer }  from './Pointer.js'
 import { toMatrix } from './Transform.js'
+import { Text }     from './Text.js'
 
 /**
  * @typedef {object} FrameContext
@@ -116,6 +117,35 @@ export class Tulle {
 
   /** Names of every registered effect. */
   static get registered() { return [...registry.keys()] }
+
+  /**
+   * Create a canvas and a Tulle for it in one call — go from an empty container
+   * to running with no HTML. `target` is a CSS selector or an element: a canvas
+   * is used as-is, anything else gets a fresh canvas appended to it.
+   *
+   *   const tulle = Tulle.mount('#app', { width: 640, height: 420 })
+   *   tulle.chain(['blur']).play(video)
+   *
+   * @param {string | Element} target
+   * @param {TulleOptions & { width?: number, height?: number }} [options]
+   * @returns {Tulle}
+   */
+  static mount(target, { width, height, ...options } = {}) {
+    const el = typeof target === 'string' ? document.querySelector(target) : target
+    if (!el) throw new Error(`Tulle.mount: no element matches ${JSON.stringify(target)}.`)
+
+    let canvas
+    if (el.tagName === 'CANVAS') {
+      canvas = el
+    } else {
+      canvas = document.createElement('canvas')
+      el.appendChild(canvas)
+    }
+    if (width  != null) canvas.width  = width
+    if (height != null) canvas.height = height
+
+    return new Tulle(canvas, options)
+  }
 
   // ── Introspection ─────────────────────────────────────────────────────────
 
@@ -306,6 +336,26 @@ export class Tulle {
     return this
   }
 
+  /**
+   * Create a text source sized to this canvas. Sugar for `new Text(...)` that
+   * fills in the frame geometry, so the block lands undistorted when used as a
+   * layer. Keep the returned Text to restyle it live with set()/update().
+   *
+   *   const title = tulle.text('Hello', { size: 72, color: '#ff5470' })
+   *   tulle.composite([{ source: video }, { source: title }])
+   *
+   * @param {string} text
+   * @param {Partial<import('./Text.js').TEXT_DEFAULTS>} [options]
+   * @returns {Text}
+   */
+  text(text, options = {}) {
+    return new Text(text, {
+      width:  this.#canvas.width,
+      height: this.#canvas.height,
+      ...options,
+    })
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   /**
@@ -355,6 +405,23 @@ export class Tulle {
    */
   process(source, name, params = {}) {
     return this.apply(name, params).render(source)
+  }
+
+  /**
+   * Take over the loop and render `source` every frame — the common case, with
+   * no closure. `play(video)` re-reads the live element each frame; in composite
+   * mode call `play()` with no argument (layers carry their own sources).
+   *
+   *   tulle.chain(['blur', 'grain']).play(video)
+   *   tulle.composite(layers).play()
+   *
+   * @param {import('./Tulle.js').ImageSource | (() => any)} [source] — a source, or
+   *   a function returning one, evaluated each frame.
+   * @returns {() => void} stop
+   */
+  play(source) {
+    const pick = typeof source === 'function' ? source : () => source
+    return this.start(() => this.render(pick()))
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────

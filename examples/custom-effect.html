@@ -4,22 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tulle — custom effect</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="styles/style.css">
 </head>
 <body>
 
   <h1>TULLE / custom effect</h1>
 
-  <nav>
+<nav>
     <a href="index.html">index</a>
-    <a href="basic.html">basic</a>
-    <a href="video.html">video</a>
-    <a href="pointer.html">pointer</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
     <a href="custom-effect.html" aria-current="page">custom effect</a>
-    <a href="composite.html">composite</a>
-    <a href="transparency.html">transparency</a>
-    <a href="layout.html">layout</a>
-    <a href="lut.html">LUT</a>
   </nav>
 
   <p class="note">
@@ -50,11 +46,11 @@
 
   <div class="status" id="status">vignette → pixelate</div>
 
-<script src="guard.js"></script>
+<script src="js/guard.js"></script>
 
 <script type="module">
   import { Tulle, Effect }     from '../src/index.js'
-  import { createTestPattern } from './test-pattern.js'
+  import { createTestPattern } from './js/test-pattern.js'
 
   // ── Vignette ──────────────────────────────────────────────────────────────
   // Declare the uniform types and Tulle binds them. No gl. calls anywhere.

@@ -1,4 +1,4 @@
-import { Effect } from '../src/index.js'
+import { Effect } from '../../core/Effect.js'
 
 /**
  * Shockwave — expanding ring distortion, detonated on demand.
@@ -9,7 +9,12 @@ import { Effect } from '../src/index.js'
  *
  * The blast list is a flat Float32Array of vec3 (u, v, birth) uploaded through
  * the raw-binder escape hatch, because Tulle's declared-type table stops at a
- * single vec3, not an array of them.
+ * single vec3, not an array of them. Pair it with a BlastField (below) to stamp
+ * blasts on click:
+ *
+ *   const blasts = new BlastField()
+ *   tulle.chain(['shockwave']).set('shockwave', { blasts: blasts.buffer() })
+ *   tulle.on('pointerdown', p => blasts.detonate(p.u, p.v, tulle.frame.time))
  */
 const MAX_BLASTS = 6
 

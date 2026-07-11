@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — VHS</title>
+  <link rel="stylesheet" href="styles/style.css">
+  <style>
+    #canvas { width: min(640px, 100%); height: auto; image-rendering: auto; background: #000 }
+    .whack { width: 100% }
+    .whack.armed { border-color: #ff5e7a; color: #fff }
+  </style>
+</head>
+<body>
+
+  <h1>TULLE / VHS</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html" aria-current="page">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="custom-effect.html">custom effect</a>
+  </nav>
+
+  <p class="note">
+    An 80s tape playing on a tired VCR. A generated Outrun scene and a distorted
+    on-screen display are <strong>composited</strong>, then the whole signal runs
+    through a <strong>layered post chain</strong> —
+    <code>vhs → scanlines → grade → vignette → grain</code>. The
+    <code>vhs</code> effect is one shader: tracking jitter, chroma bleed, a
+    sweeping dropout band, and sync roll. Whack the VCR.
+  </p>
+
+  <canvas id="canvas" width="640" height="480"></canvas>
+
+  <div class="controls">
+    <button class="whack" id="whack">🖐 WHACK THE VCR (or press the canvas)</button>
+    <div class="card">
+      <header>tape</header>
+      <label>age
+        <input type="range" id="age" min="0" max="1" step="0.01" value="0.55">
+        <output id="age-val">0.55</output>
+      </label>
+      <label>tracking
+        <input type="range" id="tracking" min="0" max="1.5" step="0.01" value="0.5">
+        <output id="tracking-val">0.50</output>
+      </label>
+      <label>sync roll
+        <input type="range" id="roll" min="0" max="1" step="0.01" value="0.35">
+        <output id="roll-val">0.35</output>
+      </label>
+      <label>chroma bleed
+        <input type="range" id="bleed" min="0" max="1.5" step="0.01" value="0.6">
+        <output id="bleed-val">0.60</output>
+      </label>
+      <label style="justify-content:flex-start">
+        <input type="checkbox" id="osd" checked> on-screen display
+      </label>
+      <label>your own footage
+        <input type="file" id="file" accept="video/*">
+      </label>
+    </div>
+  </div>
+
+  <div class="status" id="status">▶ generated scene — load a video to play your own</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle } from '../src/ready.js'
+
+  const $ = id => document.getElementById(id)
+  const canvas = $('canvas')
+  const W = canvas.width, H = canvas.height
+
+  // ── The footage: a generated Outrun scene, drawn fresh each frame ────────────
+  // (Swapped for a <video> if the viewer loads one.)
+  const scene = document.createElement('canvas')
+  scene.width = W; scene.height = H
+  const g = scene.getContext('2d')
+
+  function drawScene(t) {
+    const horizon = H * 0.52
+
+    // Sky — sunset gradient.
+    const sky = g.createLinearGradient(0, 0, 0, horizon)
+    sky.addColorStop(0.0, '#1a0533')
+    sky.addColorStop(0.55, '#7a1f8f')
+    sky.addColorStop(0.82, '#ff5e7a')
+    sky.addColorStop(1.0, '#ffb15e')
+    g.fillStyle = sky
+    g.fillRect(0, 0, W, horizon)
+
+    // Sun with the classic horizontal cutouts.
+    const cx = W / 2, sunR = 95, sunY = horizon - 40
+    const sun = g.createLinearGradient(0, sunY - sunR, 0, sunY + sunR)
+    sun.addColorStop(0, '#fff3b0'); sun.addColorStop(0.5, '#ff8f3c'); sun.addColorStop(1, '#ff2e7e')
+    g.fillStyle = sun
+    g.beginPath(); g.arc(cx, sunY, sunR, 0, Math.PI * 2); g.fill()
+    g.fillStyle = '#1a0533'
+    for (let i = 0; i < 7; i++) {
+      const bandY = sunY + i * 9 + 8
+      g.fillRect(cx - sunR, bandY, sunR * 2, (2 + i))   // gaps widen toward the bottom
+    }
+
+    // Ground.
+    g.fillStyle = '#0a0018'
+    g.fillRect(0, horizon, W, H - horizon)
+
+    // Perspective grid — magenta, scrolling toward the viewer.
+    g.strokeStyle = 'rgba(255,60,160,0.7)'
+    g.lineWidth = 2
+    for (let i = -10; i <= 10; i++) {                    // verticals to the vanishing point
+      g.beginPath(); g.moveTo(cx, horizon); g.lineTo(cx + i * 90, H); g.stroke()
+    }
+    for (let k = 0; k < 14; k++) {                       // horizontals, perspective-compressed
+      const f = (k / 14 + (t * 0.35) % 1) % 1
+      const y = horizon + (H - horizon) * f * f
+      g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke()
+    }
+  }
+
+  const tulle = new Tulle(canvas, { pointer: false })
+
+  // On-screen display — its own layer, so the VHS post chain distorts it too,
+  // exactly like a real tape's burned-in OSD.
+  const osd = tulle.text('▶  PLAY', {
+    size: 34, weight: 700, align: 'left', vAlign: 'top', padding: 26,
+    font: '"Courier New", monospace', color: '#f0f0ff',
+    shadow: { color: 'rgba(0,0,0,0.6)', blur: 2, x: 2, y: 2 },
+  })
+
+  function rebuild() {
+    const layers = [{ source: videoEl ?? scene }]
+    if ($('osd').checked) layers.push({ source: osd })
+    tulle.composite(layers).post([
+      { name: 'vhs',       params: vhsParams() },
+      { name: 'scanlines', params: { count: 480, intensity: 0.28, speed: 0.4 } },
+      { name: 'grade',     params: { saturation: 0.9, contrast: 1.12, exposure: 1.04 } },
+      { name: 'vignette',  params: { amount: 0.55 } },
+      { name: 'grain',     params: { amount: 0.05 } },
+    ])
+  }
+
+  // Master "age" nudges several artifacts at once; the sliders fine-tune.
+  function vhsParams() {
+    const age = +$('age').value
+    return {
+      tracking:   trackingLive,
+      roll:       +$('roll').value,
+      bleed:      +$('bleed').value,
+      noise:      0.2 + age * 0.7,
+      desaturate: 0.1 + age * 0.4,
+      wobble:     0.4 + age * 0.6,
+    }
+  }
+
+  // Whacking the VCR spikes tracking, which then eases back to the slider value.
+  let trackingLive = +$('tracking').value
+  let jolt = 0
+  const whack = () => { jolt = 1.4 }
+  $('whack').addEventListener('click', whack)
+  canvas.addEventListener('pointerdown', whack)
+
+  let videoEl = null
+  rebuild()
+
+  const pad = n => String(n).padStart(2, '0')
+  tulle.start(({ time: t }) => {
+    if (!videoEl) drawScene(t)
+
+    // Ease tracking toward the slider, plus any decaying jolt.
+    jolt *= 0.94
+    trackingLive = +$('tracking').value + jolt
+    tulle.set('vhs', vhsParams())
+
+    if ($('osd').checked) {
+      const s = Math.floor(t)
+      osd.set(`▶  PLAY\nSP   ${pad((s / 3600) | 0)}:${pad(((s / 60) | 0) % 60)}:${pad(s % 60)}`)
+    }
+    $('whack').classList.toggle('armed', jolt > 0.05)
+    tulle.render()
+  })
+
+  // ── Controls ────────────────────────────────────────────────────────────────
+  for (const id of ['age', 'tracking', 'roll', 'bleed']) {
+    $(id).addEventListener('input', () => { $(`${id}-val`).textContent = (+$(id).value).toFixed(2) })
+  }
+  $('osd').addEventListener('change', rebuild)
+
+  $('file').addEventListener('change', () => {
+    const file = $('file').files[0]
+    if (!file) return
+    videoEl = document.createElement('video')
+    videoEl.src = URL.createObjectURL(file)
+    videoEl.loop = videoEl.muted = videoEl.playsInline = true
+    videoEl.play()
+    $('status').textContent = `▶ ${file.name}`
+    rebuild()
+  })
+</script>
+
+</body>
+</html>
