@@ -5,6 +5,9 @@ import { Scope }    from './Scope.js'
 import { Pointer }  from './Pointer.js'
 import { toMatrix } from './Transform.js'
 import { Text }     from './Text.js'
+import { Clip }     from './Clip.js'
+import { coerceRoot, flattenLeaves, solveLayout, rectToMatrix, fitRect, coverUV, intrinsicSize, aspectOf, HIDDEN } from './Layout.js'
+import { record as recordVideo, walkFrames } from './Recorder.js'
 
 /**
  * @typedef {object} FrameContext
@@ -45,6 +48,16 @@ export class Tulle {
 
   #postDescriptors = [] // [{ name, params }] — post chain over the composite
   #postPasses      = null // compiled; null means stale
+
+  #layoutTree   = null  // the flow tree, re-solved each frame in composite mode
+  #layoutFrame  = null  // { width, height } design-space frame
+  #layoutOrder  = null  // flattened leaves, aligned with the composite layers
+
+  #scrollX = 0
+  #scrollY = 0
+  #scrollMax = { x: 0, y: 0 } // content bounds from the last solve, for clamping
+  #scrollMode = null          // null | 'x' | 'y' | 'both'
+  #scrollTeardown = null      // removes the wheel listener
 
   #running   = false
   #raf       = null
@@ -157,6 +170,9 @@ export class Tulle {
   /** Names currently in the pipeline, in order. */
   get pipeline()  { return this.#pipeline.map(step => step.name) }
 
+  /** The sources currently composited, in layer order. Used by offline export to seek clips. */
+  get sources()   { return this.#layerDescriptors.map(desc => desc.source) }
+
   /** @returns {FrameContext} */
   get frame() {
     return {
@@ -164,8 +180,16 @@ export class Tulle {
       delta:   this.#delta,
       frame:   this.#frame,
       pointer: this.#pointer,
+      scrollX: this.#scrollX,
+      scrollY: this.#scrollY,
     }
   }
+
+  /** Current scroll offset in design px. */
+  get scrollX() { return this.#scrollX }
+  get scrollY() { return this.#scrollY }
+  /** Max scroll on each axis (content size − viewport), from the last solved frame. */
+  get scrollMax() { return { ...this.#scrollMax } }
 
   // ── Events ────────────────────────────────────────────────────────────────
 
@@ -236,10 +260,71 @@ export class Tulle {
    */
   composite(layers) {
     this.#mode = 'composite'
+    this.#layoutTree = null // a hand-built composite is not a layout
+    this.#setScroll(null)   // …and carries no scroll
     this.#layerDescriptors = layers.map(normalizeLayer)
     this.#invalidateLayers()
     return this
   }
+
+  /**
+   * Arrange sources with a flow layout. Boxes pack inline (left-to-right, wrapping)
+   * until wrapped in a block(), which stacks its children and breaks the line;
+   * position them with `relative`/`absolute`. Layout is solved in design-space
+   * pixels and re-solved every frame, so it reacts to a Clip's size becoming known
+   * and to animated offsets — the renderer only ever sees the resulting transforms.
+   *
+   *   import { block, box } from 'tulle'
+   *   tulle.layout(
+   *     block([ tulle.clip('film.mp4'), box(title, { blend: 'screen' }) ], { gap: 24 })
+   *   ).play()
+   *
+   * Builds on composite(): each leaf is a layer, in document (paint) order. Effects,
+   * blend, and opacity travel on each box's options. The design frame defaults to
+   * the canvas size.
+   *
+   * When `scroll` is set, content taller/wider than the frame can be scrolled — the
+   * viewport pans over it (mouse wheel, or scrollTo/scrollBy), and a `position:
+   * 'fixed'` box stays pinned. `scrollY` / `scrollX` are on the frame context too, so
+   * a param can be a function of scroll (scroll-linked animation).
+   *
+   * @param {import('./Layout.js').LayoutNode | Array | *} node — a node, an array
+   *   (an inline root), or a bare source.
+   * @param {{ width?: number, height?: number, scroll?: boolean | 'x' | 'y' | 'both' }} [options]
+   */
+  layout(node, { width, height, scroll = false } = {}) {
+    this.#layoutFrame = { width: width ?? this.#canvas.width, height: height ?? this.#canvas.height }
+    const tree  = coerceRoot(node)
+    const order = flattenLeaves(tree)
+    // Build the composite once (compiles effects/blends); transforms are updated
+    // live each frame by #applyLayout, so no recompile on movement.
+    this.composite(order.map(leaf => ({
+      source:  leaf.source,
+      effects: leaf.effects,
+      blend:   leaf.blend,
+      // A function opacity animates; seed it with 1 and resolve it each frame.
+      opacity: typeof leaf.opacity === 'function' ? 1 : leaf.opacity,
+    })))
+    this.#layoutTree  = tree
+    this.#layoutOrder = order
+    this.#setScroll(scroll === true ? 'y' : scroll || null)
+    return this
+  }
+
+  /**
+   * Scroll to an absolute offset in design px (clamped to the content). In a layout
+   * with `scroll` enabled.
+   * @param {number} [x] @param {number} [y]
+   */
+  scrollTo(x = this.#scrollX, y = this.#scrollY) {
+    this.#scrollX = Math.max(0, Math.min(x, this.#scrollMax.x))
+    this.#scrollY = Math.max(0, Math.min(y, this.#scrollMax.y))
+    if (!this.#running && this.#layoutTree) this.render()
+    return this
+  }
+
+  /** Scroll by a delta in design px, clamped. @param {number} dx @param {number} dy */
+  scrollBy(dx = 0, dy = 0) { return this.scrollTo(this.#scrollX + dx, this.#scrollY + dy) }
 
   /**
    * Set the post-processing chain applied to the whole composited frame, after
@@ -337,6 +422,21 @@ export class Tulle {
   }
 
   /**
+   * Set a layer's UV crop: `[offsetX, offsetY, scaleX, scaleY]` in 0..1, or null for
+   * no crop. The layout engine uses this for `cover` fit; live, no recompile.
+   * @param {number} index @param {Float32Array|number[]|null} uvRect
+   */
+  setLayerUV(index, uvRect) {
+    const desc = this.#layerDescriptors[index]
+    if (!desc) throw new Error(
+      `Tulle.setLayerUV: no layer at index ${index} (have ${this.#layerDescriptors.length}).`
+    )
+    desc.uvRect = uvRect ? Float32Array.from(uvRect) : null
+    if (this.#layers?.[index]) this.#layers[index].uvRect = desc.uvRect
+    return this
+  }
+
+  /**
    * Create a text source sized to this canvas. Sugar for `new Text(...)` that
    * fills in the frame geometry, so the block lands undistorted when used as a
    * layer. Keep the returned Text to restyle it live with set()/update().
@@ -356,6 +456,27 @@ export class Tulle {
     })
   }
 
+  /**
+   * Create a video Clip source, owned by this Tulle — it is destroyed when the
+   * Tulle is (which the loop does automatically when the canvas leaves the DOM).
+   * A Clip is a source with a lifecycle: subscribe to load/ready/play/end and set
+   * timeline cues with at()/every(). Drop it straight into a layer.
+   *
+   *   const clip = tulle.clip('film.mp4', { autoplay: true })
+   *   clip.on('ready', () => …)
+   *   clip.at(2.5, () => …)
+   *   tulle.composite([{ source: clip }]).play()
+   *
+   * Use `new Clip(...)` directly if you want to own its teardown yourself.
+   *
+   * @param {string | HTMLVideoElement} src
+   * @param {import('../../types/index.js').ClipOptions} [options]
+   * @returns {Clip}
+   */
+  clip(src, options = {}) {
+    return this.#scope.own(new Clip(src, options))
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   /**
@@ -368,9 +489,17 @@ export class Tulle {
     // Keep the clock moving for callers who render outside start().
     if (!this.#running) this.#time = (performance.now() - this.#origin) / 1000
 
+    // Advance any source with a lifecycle (a Clip) once per frame, so its cues fire
+    // and its 'time' event ticks. Deduped so a clip used in two layers advances once;
+    // duck-typed so plain images/canvases/Text are simply skipped.
+    const advanced = new Set()
+    const tick = s => { if (s && !advanced.has(s)) { advanced.add(s); s.advance?.(this.frame) } }
+
     if (this.#mode === 'composite') {
       if (this.#layerDescriptors.length === 0)
         throw new Error('Tulle.render: no layers. Call .composite() first.')
+      for (const desc of this.#layerDescriptors) tick(desc.source)
+      if (this.#layoutTree) this.#applyLayout() // re-solve flow → per-layer transforms
       if (!this.#layers) this.#compileLayers()
       if (!this.#postPasses) this.#compilePost()
       this.#renderer.composite(this.#layers, this.#postPasses, this.frame)
@@ -380,6 +509,7 @@ export class Tulle {
     if (this.#pipeline.length === 0)
       throw new Error('Tulle.render: no pipeline. Call .apply() or .chain() first.')
 
+    tick(source)
     if (!this.#passes) this.#compile()
     this.#renderer.run(source, this.#passes, this.frame)
     return this
@@ -405,6 +535,42 @@ export class Tulle {
    */
   process(source, name, params = {}) {
     return this.apply(name, params).render(source)
+  }
+
+  /**
+   * Render the composition to a WebM video, deterministically and offline. Walks
+   * the timeline frame by frame — seeking every Clip to each exact time and waiting
+   * — so a 30fps export matches a 144Hz preview. Requires WebCodecs. Stops the live
+   * loop first; it does not resume it. Duration is inferred from the longest clip if
+   * omitted. Meaningful in composite/layout mode, where layers carry their sources.
+   *
+   *   const blob = await tulle.record({ fps: 30, duration: 6, onProgress: p => bar(p) })
+   *   const url = URL.createObjectURL(blob)
+   *
+   * @param {import('./Recorder.js').RecordOptions} [options]
+   * @returns {Promise<Blob>} a video/webm blob
+   */
+  record(options) {
+    this.#assertAlive('record')
+    return recordVideo(this, options)
+  }
+
+  /**
+   * Walk the timeline deterministically, calling `onFrame(canvas, meta)` per frame
+   * after seeking sources and rendering. The building block under record() — use it
+   * to export a frame sequence, feed a custom encoder, or grab thumbnails.
+   *
+   *   await tulle.frames({ fps: 12, duration: 4 }, async (canvas, { index }) => {
+   *     saveThumbnail(canvas.toDataURL(), index)
+   *   })
+   *
+   * @param {{ fps?: number, duration?: number, from?: number }} options
+   * @param {(canvas: HTMLCanvasElement, meta: { index: number, time: number, timestamp: number }) => any} onFrame
+   * @returns {Promise<number>} frames walked
+   */
+  frames(options, onFrame) {
+    this.#assertAlive('frames')
+    return walkFrames(this, options, onFrame)
   }
 
   /**
@@ -504,6 +670,9 @@ export class Tulle {
     this.#pipeline = []
     this.#layerDescriptors = []
     this.#postDescriptors = []
+    this.#layoutTree = null
+    this.#layoutOrder = null
+    this.#setScroll(null)
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
@@ -560,7 +729,55 @@ export class Tulle {
       blend:  i === 0 ? null : this.#instantiate(desc.blend, desc.blendParams),
       // Read fresh each frame by the renderer, so setLayerTransform is live.
       transform: desc.transform,
+      uvRect:    desc.uvRect,
     }))
+  }
+
+  /**
+   * Enable/disable viewport scrolling for the current layout. Adds a non-passive
+   * wheel listener (so it can preventDefault the page scroll); removes the previous
+   * one. mode is 'x' | 'y' | 'both' | null.
+   */
+  #setScroll(mode) {
+    if (this.#scrollTeardown) { this.#scrollTeardown(); this.#scrollTeardown = null }
+    this.#scrollMode = mode
+    if (!mode) { this.#scrollX = this.#scrollY = 0; this.#scrollMax = { x: 0, y: 0 }; return }
+
+    const onWheel = event => {
+      event.preventDefault() // this canvas owns the wheel now
+      const dx = mode === 'x' || mode === 'both' ? event.deltaX : 0
+      const dy = mode === 'y' || mode === 'both' ? event.deltaY : 0
+      this.scrollBy(dx, dy)
+    }
+    this.#canvas.addEventListener('wheel', onWheel, { passive: false })
+    this.#scrollTeardown = () => this.#canvas.removeEventListener('wheel', onWheel, { passive: false })
+  }
+
+  /**
+   * Re-solve the flow tree and push a fresh transform to each layer. No recompile.
+   * Passes the frame context to the solver, so a box's offset/size/opacity may be a
+   * function of time — that is the whole layout-animation feature. Also feeds the
+   * scroll offset and reads back the content bounds for clamping.
+   */
+  #applyLayout() {
+    const ctx = this.frame
+    const solved = solveLayout(this.#layoutTree, this.#layoutFrame, intrinsicSize, ctx,
+      this.#scrollMode ? { x: this.#scrollX, y: this.#scrollY } : undefined)
+    const { rects } = solved
+    this.#scrollMax = solved.scrollMax
+    // Re-clamp the stored scroll to the freshly measured content.
+    this.#scrollX = Math.min(this.#scrollX, this.#scrollMax.x)
+    this.#scrollY = Math.min(this.#scrollY, this.#scrollMax.y)
+    for (let i = 0; i < rects.length; i++) {
+      const leaf = this.#layoutOrder[i]
+      if (typeof leaf.opacity === 'function') this.setLayer(i, { opacity: leaf.opacity(ctx) })
+      const box = rects[i]
+      if (!box || !(box.w > 0) || !(box.h > 0)) { this.setLayerTransform(i, HIDDEN); continue }
+      const aspect = aspectOf(leaf.source)
+      // contain/fill are geometry; cover keeps the full box and crops via UV.
+      this.setLayerTransform(i, rectToMatrix(fitRect(box, aspect, leaf.fit), this.#layoutFrame))
+      this.setLayerUV(i, leaf.fit === 'cover' ? coverUV(box, aspect) : null)
+    }
   }
 
   #invalidatePost() {
@@ -584,5 +801,6 @@ function normalizeLayer(layer) {
     blend:       layer.blend ?? 'over',
     blendParams: { opacity: layer.opacity ?? 1, ...layer.blendParams },
     transform:   toMatrix(layer.transform),
+    uvRect:      layer.uvRect ? Float32Array.from(layer.uvRect) : null,
   }
 }

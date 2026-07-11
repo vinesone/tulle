@@ -44,12 +44,33 @@
     </div>
 
     <div class="card">
-      <header><a href="custom-effect.html">custom effect</a></header>
+      <header><a href="layout.html">layout</a></header>
       <p class="note" style="text-align:left">
-        Write your own. A fragment shader plus a defaults object is the entire
-        extension API — two effects defined inline in the page.
+        Flow layout: sources are boxes that pack <code>inline</code> and wrap until
+        wrapped in a <code>block()</code>; a badge sits <code>absolute</code>. Drag
+        the sliders and watch it re-flow live — solved in design pixels, re-solved
+        every frame, the renderer only sees transforms.
       </p>
     </div>
+
+    <div class="card">
+      <header><a href="scroll.html">scroll</a></header>
+      <p class="note" style="text-align:left">
+        A scrolling composition — the experience, not a document. Content pans with
+        the wheel, a header stays <code>fixed</code>, and a progress bar + badge are
+        functions of <code>scrollY</code>. Every layer is still live WebGL.
+      </p>
+    </div>
+
+    <div class="card">
+      <header><a href="export.html">export</a></header>
+      <p class="note" style="text-align:left">
+        Deterministic offline export. An animated scene is walked frame by frame
+        with <code>renderAt()</code>, encoded with WebCodecs, and muxed to
+        <code>.webm</code> — no dependencies. Press Record, get a file.
+      </p>
+    </div>
+
   </div>
 
   <div class="status">served from <code>npm run dev</code></div>

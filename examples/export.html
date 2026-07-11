@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — export</title>
+  <link rel="stylesheet" href="styles/style.css">
+</head>
+<body>
+
+  <h1>TULLE / export</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="layout.html">layout</a>
+    <a href="scroll.html">scroll</a>
+    <a href="export.html" aria-current="page">export</a>
+  </nav>
+
+  <p class="note">
+    Deterministic offline export. The scene animates with <code>wave()</code> and
+    <code>keyframes()</code>; <strong>Record</strong> walks the timeline frame by
+    frame with <code>renderAt()</code>, encodes each with WebCodecs, and muxes a
+    <code>.webm</code> — all with no dependencies. A 30fps export matches the live
+    preview because every frame is a pure function of time. Requires a WebCodecs
+    browser (Chrome/Edge).
+  </p>
+
+  <canvas id="canvas" width="720" height="405"></canvas>
+
+  <div class="controls">
+    <div class="card">
+      <header>export</header>
+      <label>duration (s)
+        <input type="range" id="dur" min="1" max="8" step="1" value="4">
+        <output id="dur-val">4</output>
+      </label>
+      <label>fps
+        <select id="fps" style="flex:1; background:#141414; border:1px solid #333; color:#ccc; font:inherit; padding:4px 8px">
+          <option>24</option><option selected>30</option><option>60</option>
+        </select>
+      </label>
+      <button id="rec" style="background:#ff5470; border:0; color:#fff; font:inherit; font-weight:700; padding:8px 14px; border-radius:6px; cursor:pointer">Record</button>
+      <progress id="bar" value="0" max="1" style="width:100%; display:none"></progress>
+      <a id="dl" style="display:none; color:#4cc9f0"></a>
+    </div>
+  </div>
+
+  <div class="status" id="status">ready — press Record</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle, box, inline, block, wave, keyframes } from '../src/ready.js'
+
+  const $ = id => document.getElementById(id)
+  const canvas = $('canvas')
+  const tulle  = new Tulle(canvas, { autoDestroy: false }) // we stop/restart around record
+
+  // ── A generated, animated scene — no external assets ────────────────────────
+  function panel(color) {
+    const c = document.createElement('canvas'); c.width = 400; c.height = 225
+    const ctx = c.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 400, 225)
+    return c
+  }
+  const bg    = panel('#101024')
+  const card  = panel('#118ab2')
+  const title = tulle.text('EXPORT', { size: 96, weight: 800, color: '#fff' })
+  const badge = tulle.text('●', { size: 60, color: '#ffd166' })
+
+  function scene() {
+    tulle.layout(block([
+      box(bg, { fit: 'fill', width: 720, height: 405, position: 'absolute', offset: { left: 0, top: 0 } }),
+      box(card, {
+        width: 360, height: 202,
+        position: 'relative',
+        offset: { left: wave({ from: 40, to: 320, hz: 0.25 }), top: 100 }, // slides across
+      }),
+      box(title, {
+        width: 420, height: 120,
+        position: 'absolute',
+        offset: { left: 40, bottom: 40 },
+        opacity: keyframes([{ t: 0, v: 0 }, { t: 1, v: 1, ease: 'outCubic' }, { t: 3, v: 1 }, { t: 4, v: 0, ease: 'inCubic' }]),
+      }),
+      box(badge, { width: 60, height: 60, position: 'absolute', offset: { right: wave({ from: 30, to: 90, hz: 0.5 }), top: 30 } }),
+    ]), { width: 720, height: 405 })
+  }
+  scene()
+  const stopLoop = tulle.play()
+
+  // ── Record ──────────────────────────────────────────────────────────────────
+  $('rec').addEventListener('click', async () => {
+    const duration = +$('dur').value, fps = +$('fps').value
+    $('rec').disabled = true
+    $('bar').style.display = 'block'; $('dl').style.display = 'none'
+    $('status').textContent = 'recording…'
+
+    stopLoop() // record() stops the loop anyway; be explicit
+    try {
+      const blob = await tulle.record({
+        fps, duration,
+        onProgress: p => { $('bar').value = p; $('status').textContent = `recording… ${Math.round(p * 100)}%` },
+      })
+      const url = URL.createObjectURL(blob)
+      const dl = $('dl')
+      dl.href = url
+      dl.download = `tulle-${duration}s-${fps}fps.webm`
+      dl.textContent = `download ${(blob.size / 1048576).toFixed(1)} MB .webm`
+      dl.style.display = 'inline'
+      $('status').textContent = `done — ${duration}s @ ${fps}fps`
+    } catch (err) {
+      $('status').textContent = `export failed: ${err.message}`
+      console.error(err)
+    } finally {
+      $('bar').style.display = 'none'
+      $('rec').disabled = false
+      scene(); tulle.play() // resume the live preview
+    }
+  })
+
+  const durOut = () => $('dur-val').textContent = $('dur').value
+  $('dur').addEventListener('input', durOut)
+</script>
+
+</body>
+</html>

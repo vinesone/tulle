@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — layout</title>
+  <link rel="stylesheet" href="styles/style.css">
+</head>
+<body>
+
+  <h1>TULLE / layout</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="layout.html" aria-current="page">layout</a>
+    <a href="scroll.html">scroll</a>
+    <a href="export.html">export</a>
+  </nav>
+
+  <p class="note">
+    Flow layout: sources are <strong>boxes</strong> that pack <strong>inline</strong>
+    (left-to-right, wrapping) until wrapped in a <code>block()</code>, which stacks
+    its children and breaks the line. A badge is placed <code>absolute</code> against
+    the frame. Everything is solved in design-space pixels and re-solved every frame,
+    so <strong>drag the sliders</strong> and watch it re-flow live — the renderer only
+    ever sees the resulting transforms. The badge <strong>bobs</strong> and
+    <strong>pulses</strong>: its offset and opacity are <code>wave()</code>/
+    <code>keyframes()</code> functions of time, resolved every frame.
+  </p>
+
+  <canvas id="canvas" width="720" height="480"></canvas>
+
+  <div class="controls">
+    <div class="card">
+      <header>flow</header>
+      <label>gap
+        <input type="range" id="gap" min="0" max="60" step="1" value="16">
+        <output id="gap-val">16</output>
+      </label>
+      <label>padding
+        <input type="range" id="pad" min="0" max="80" step="1" value="24">
+        <output id="pad-val">24</output>
+      </label>
+      <label>tiles
+        <input type="range" id="tiles" min="1" max="10" step="1" value="6">
+        <output id="tiles-val">6</output>
+      </label>
+      <label>fit
+        <select id="fit" style="flex:1; background:#141414; border:1px solid #333; color:#ccc; font:inherit; padding:4px 8px">
+          <option value="contain">contain</option>
+          <option value="cover">cover</option>
+          <option value="fill">fill</option>
+        </select>
+      </label>
+      <label>align (cross)
+        <select id="align" style="flex:1; background:#141414; border:1px solid #333; color:#ccc; font:inherit; padding:4px 8px">
+          <option value="start">start</option>
+          <option value="center">center</option>
+          <option value="end">end</option>
+        </select>
+      </label>
+      <label>justify (main)
+        <select id="justify" style="flex:1; background:#141414; border:1px solid #333; color:#ccc; font:inherit; padding:4px 8px">
+          <option value="start">start</option>
+          <option value="center">center</option>
+          <option value="end">end</option>
+          <option value="between">between</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="status" id="status">re-flowing every frame</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle, box, inline, block, wave, keyframes } from '../src/ready.js'
+
+  const $ = id => document.getElementById(id)
+  const canvas = $('canvas')
+  const tulle  = new Tulle(canvas)
+
+  // ── Sources: coloured tiles of assorted aspect ratios, plus a title ─────────
+  // A canvas is a layer source, so these need no files. A Clip('film.mp4') would
+  // drop into any of these boxes the same way once it fires 'ready'.
+  const PALETTE = ['#ff5470', '#ffd166', '#06d6a0', '#118ab2', '#8367c7', '#ef476f', '#4cc9f0', '#f78c6b', '#b5179e', '#80ed99']
+  const ASPECTS = [16 / 9, 1, 4 / 3, 3 / 4, 21 / 9, 1, 16 / 10, 9 / 16, 2, 1]
+
+  function tile(color, aspect, i) {
+    const w = 480, h = Math.round(480 / aspect)
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = color; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'
+    ctx.font = `bold ${Math.min(w, h) * 0.4}px system-ui`
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText(String(i + 1), w / 2, h / 2)
+    return c
+  }
+  const tiles = PALETTE.map((c, i) => tile(c, ASPECTS[i], i))
+
+  const title = tulle.text('FLOW', { size: 96, weight: 800, color: '#0b0b0b', background: '#e9ecef' })
+  const badge = tulle.text('LIVE', { size: 40, weight: 800, color: '#fff', background: '#ff5470' })
+
+  // ── Build the tree from the controls, then re-hand it to layout() ───────────
+  function build() {
+    const gap = +$('gap').value, padding = +$('pad').value
+    const n   = +$('tiles').value
+    const fit = $('fit').value
+
+    const align = $('align').value, justify = $('justify').value
+    // width:200, height:120 forces a fixed box so cover/contain/fill differ visibly
+    const cells = tiles.slice(0, n).map(t => box(t, { fit, width: 200, height: 120 }))
+
+    tulle.layout(
+      block([
+        // a title strip that spans its own line (block breaks flow)
+        block([ box(title, { width: 260, height: 90 }) ]),
+        // the tiles flow inline and wrap, aligned/justified by the controls
+        inline(cells, { gap, align, justify }),
+        // a small badge, pinned bottom-right — but its offset and opacity are
+        // functions of time, so it bobs and pulses. Layout re-solves every frame,
+        // so nothing else is needed; the renderer still just gets a transform.
+        box(badge, {
+          position: 'absolute',
+          offset: { right: 16, bottom: wave({ from: 16, to: 44, hz: 0.4 }) },
+          opacity: keyframes([{ t: 0, v: 0.55 }, { t: 1, v: 1, ease: 'inOutSine' }, { t: 2, v: 0.55, ease: 'inOutSine' }], { loop: true }),
+          width: 120, height: 56,
+        }),
+      ], { gap, padding }),
+    )
+  }
+
+  build()
+  tulle.play() // composite mode: layers carry their own sources; re-solved each frame
+
+  // Rebuilding the tree recompiles the (cheap) layer list; movement within a fixed
+  // tree does not — it just updates transforms. Sliders that only change gap/padding
+  // could skip the rebuild, but rebuilding keeps the demo code short and is instant.
+  const on = (id, digits) => $(id).addEventListener('input', () => {
+    if ($(`${id}-val`)) $(`${id}-val`).textContent = (+$(id).value).toFixed(digits)
+    build()
+  })
+  on('gap', 0); on('pad', 0); on('tiles', 0)
+  for (const id of ['fit', 'align', 'justify']) $(id).addEventListener('change', build)
+</script>
+
+</body>
+</html>

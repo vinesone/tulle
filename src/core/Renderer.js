@@ -212,7 +212,8 @@ export class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT)
 
     this.#pool.assertLive(content)
-    this.#blit.draw(content.tex, { ...frame, transform: layer.transform })
+    // uvRect crops the source for a 'cover'-fit layer; absent → identity (no crop).
+    this.#blit.draw(content.tex, { ...frame, transform: layer.transform, uvRect: layer.uvRect })
     this.#pool.release(content)
     return placed
   }
@@ -281,9 +282,13 @@ export class Renderer {
    */
   #upload(tex, source) {
     const gl = this.gl
+    // A source may opt out of upload while it has nothing to show — a Clip before
+    // its first decodable frame, whose video is still 0×0 and would be a WebGL
+    // error to upload. Keep last frame's texture (transparent black on frame one).
+    if (source?.uploadable === false) return
     // A source may be a raw image-like value, or an object that exposes one via
-    // `texSource` (a Text, and later a layout Surface). Resolve it here so those
-    // primitives drop into a layer with no special handling anywhere else.
+    // `texSource` (a Text, a Clip, and later a layout Surface). Resolve it here so
+    // those primitives drop into a layer with no special handling anywhere else.
     const img = source?.texSource ?? source
     gl.bindTexture(gl.TEXTURE_2D, tex)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)

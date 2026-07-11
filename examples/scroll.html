@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — scroll</title>
+  <link rel="stylesheet" href="styles/style.css">
+</head>
+<body>
+
+  <h1>TULLE / scroll</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="layout.html">layout</a>
+    <a href="scroll.html" aria-current="page">scroll</a>
+    <a href="export.html">export</a>
+  </nav>
+
+  <p class="note">
+    A scrolling composition — the experience, not a document. Content taller than the
+    frame pans with the <strong>mouse wheel</strong>; the header stays
+    <code>fixed</code>. Each section <strong>reveals as you scroll to it</strong> —
+    it slides up, fades in, and sharpens out of a blur — because its opacity, offset,
+    and its <code>blur</code> effect's radius are all <strong>functions of
+    <code>scrollY</code></strong>. Same value-of-time machinery, pointed at scroll.
+    Scroll over the canvas.
+  </p>
+
+  <canvas id="canvas" width="760" height="460"></canvas>
+
+  <div class="status" id="status">scroll ↕ over the canvas</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle, box, block, keyframes } from '../src/ready.js'
+
+  const W = 760, H = 460
+  const $ = id => document.getElementById(id)
+  const tulle = new Tulle($('canvas'))
+
+  // ── Generated content, no assets ─────────────────────────────────────────────
+  const SECTIONS = [
+    { c: '#ff5470', t: 'ARRANGE' },
+    { c: '#ffd166', t: 'COMPOSE' },
+    { c: '#06d6a0', t: 'ANIMATE' },
+    { c: '#118ab2', t: 'SCROLL' },
+    { c: '#8367c7', t: 'SHIP' },
+  ]
+  const SECTION_H = 300
+
+  function panel(color, label, i) {
+    const c = document.createElement('canvas'); c.width = W; c.height = SECTION_H
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = color; ctx.fillRect(0, 0, W, SECTION_H)
+    ctx.fillStyle = 'rgba(0,0,0,0.82)'
+    ctx.font = '800 116px system-ui'; ctx.textBaseline = 'middle'
+    ctx.fillText(label, 48, SECTION_H / 2)
+    ctx.font = '700 40px system-ui'; ctx.fillStyle = 'rgba(0,0,0,0.35)'
+    ctx.fillText(`0${i + 1}`, W - 120, 60)
+    return c
+  }
+
+  // A section's reveal progress 0..1, purely from scroll: 0 while it's below the
+  // fold, 1 once its top reaches the upper third. Everything about the section is a
+  // function of this — the compositor re-solves and re-renders it every frame.
+  const reveal = i => {
+    const top = i * SECTION_H
+    return ctx => {
+      const screenTop = top - ctx.scrollY
+      const p = (H - screenTop) / (H - H * 0.35)
+      return Math.max(0, Math.min(1, p))
+    }
+  }
+
+  const sections = SECTIONS.map((s, i) => {
+    const r = reveal(i)
+    return box(panel(s.c, s.t, i), {
+      width: W, height: SECTION_H,
+      position: 'relative',
+      offset:  { top: ctx => (1 - r(ctx)) * 64 },      // slides up into place
+      opacity: ctx => 0.08 + 0.92 * r(ctx),            // fades in
+      effects: [{ name: 'blur', params: { radius: ctx => (1 - r(ctx)) * 9 } }], // sharpens
+    })
+  })
+
+  // A dark backdrop (base layer) so the section fades reveal something behind them.
+  const backdrop = document.createElement('canvas'); backdrop.width = backdrop.height = 8
+  { const x = backdrop.getContext('2d'); x.fillStyle = '#0a0a10'; x.fillRect(0, 0, 8, 8) }
+
+  // Fixed overlays: a header bar + title, and a scroll-progress strip.
+  const bar = document.createElement('canvas'); bar.width = W; bar.height = 56
+  { const x = bar.getContext('2d'); x.fillStyle = 'rgba(10,10,16,0.72)'; x.fillRect(0, 0, W, 56) }
+  const header = tulle.text('TULLE', { size: 30, weight: 800, color: '#fff', align: 'left', padding: 24, height: 56 })
+
+  const strip = document.createElement('canvas'); strip.width = strip.height = 8
+  { const x = strip.getContext('2d'); x.fillStyle = '#4cc9f0'; x.fillRect(0, 0, 8, 8) }
+  const dot = document.createElement('canvas'); dot.width = dot.height = 16
+  { const x = dot.getContext('2d'); x.beginPath(); x.arc(8, 8, 8, 0, 7); x.fillStyle = '#ff5470'; x.fill() }
+
+  const MAX = SECTIONS.length * SECTION_H - H // total scrollable distance
+
+  tulle.layout(
+    block([
+      box(backdrop, { position: 'fixed', fit: 'fill', offset: { top: 0, left: 0 }, width: W, height: H }),
+      block(sections),                       // the tall, scrolling, self-revealing content
+      box(bar,    { position: 'fixed', offset: { top: 0, left: 0 }, width: W, height: 56 }),
+      box(header, { position: 'fixed', offset: { top: 0, left: 0 }, width: W, height: 56 }),
+      box(strip, {                           // progress strip: width tracks scroll
+        position: 'fixed', fit: 'fill', height: 4,
+        offset: { top: 56, left: 0 },
+        width: ctx => Math.max(2, (ctx.scrollY / MAX) * W),
+      }),
+      box(dot, {                             // badge eases down the right edge with scroll
+        position: 'fixed', width: 16, height: 16,
+        offset: { right: 24, top: keyframes([{ t: 0, v: 84 }, { t: MAX, v: H - 96 }], { by: 'scrollY' }) },
+      }),
+    ]),
+    { scroll: 'y' },
+  )
+
+  tulle.play()
+  tulle.on('frame', () => {
+    const pct = Math.round((tulle.scrollY / (tulle.scrollMax.y || 1)) * 100)
+    $('status').textContent = `scroll ↕ over the canvas — ${pct}%`
+  })
+</script>
+
+</body>
+</html>
