@@ -49,11 +49,11 @@
       <header>source</header>
       <div class="toolbar">
         <select id="source">
+          <option value="text" selected>text</option>
           <option value="pattern">test pattern</option>
-          <option value="text">text</option>
           <option value="video">video (load a file)</option>
         </select>
-        <input type="text" id="text-input" value="TULLE" style="display:none">
+        <input type="text" id="text-input" value="TULLE">
         <input type="file" id="file" accept="video/*" style="display:none">
       </div>
     </div>
@@ -61,6 +61,19 @@
     <div class="card">
       <header>presets</header>
       <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="card">
+      <header>LUT (.cube)</header>
+      <div class="toolbar">
+        <input type="file" id="lut-file" accept=".cube">
+        <button id="lut-clear">clear</button>
+      </div>
+      <label>amount
+        <input type="range" id="lut-amount" min="0" max="1" step="0.01" value="1">
+        <output id="lut-amount-val">1.00</output>
+      </label>
+      <div class="note" id="lut-status" style="text-align:left">no LUT — export a .cube from Premiere or Resolve and drop it in</div>
     </div>
 
     <div class="card">
@@ -75,7 +88,7 @@
 <script src="js/guard.js"></script>
 
 <script type="module">
-  import { Tulle } from '../src/ready.js'
+  import { Tulle, lutFromCube } from '../src/ready.js'
   import { createTestPattern } from './js/test-pattern.js'
 
   const $ = id => document.getElementById(id)
@@ -145,12 +158,15 @@
 
   // ── The chain, driven by the UI ──────────────────────────────────────────────
   let stack = []  // [{ name, params }]
+  let lut = null, lutSize = 32, lutAmount = 1  // a loaded .cube, applied last
 
   function rebuild() {
-    const steps = stack.length ? stack.map(s => ({ name: s.name, params: { ...s.params } }))
-                              : [{ name: 'blur', params: { radius: 0 } }]  // identity when empty
+    const steps = stack.map(s => ({ name: s.name, params: { ...s.params } }))
+    if (lut) steps.push({ name: 'lut', params: { lut, size: lutSize, amount: lutAmount } })
+    if (steps.length === 0) steps.push({ name: 'blur', params: { radius: 0 } })  // identity when empty
     tulle.chain(steps)
-    $('pipeline').textContent = stack.map(s => s.name).join('  →  ') || '(source, no effects)'
+    const names = [...stack.map(s => s.name), lut ? 'lut' : null].filter(Boolean)
+    $('pipeline').textContent = names.join('  →  ') || '(source, no effects)'
   }
 
   // Live param change with no recompile (names are unique in the stack).
@@ -261,7 +277,30 @@
     $('status').textContent = `▶ ${file.name}`
   })
 
-  loadStack(PRESETS.retro)          // open on something eye-catching
+  // ── LUT (.cube from Premiere / Resolve), applied after the stack ─────────────
+  $('lut-file').addEventListener('change', async () => {
+    const file = $('lut-file').files[0]; if (!file) return
+    try {
+      const canvas = lutFromCube(await file.text())
+      lut = canvas; lutSize = canvas.cubeSize
+      $('lut-status').textContent = `LUT: ${file.name} (${lutSize}³)`
+      rebuild()
+    } catch (err) {
+      $('lut-status').textContent = `couldn't load: ${err.message}`
+    }
+  })
+  $('lut-clear').addEventListener('click', () => {
+    lut = null; $('lut-file').value = ''
+    $('lut-status').textContent = 'no LUT — export a .cube from Premiere or Resolve and drop it in'
+    rebuild()
+  })
+  $('lut-amount').addEventListener('input', () => {
+    lutAmount = +$('lut-amount').value
+    $('lut-amount-val').textContent = lutAmount.toFixed(2)
+    if (lut) pushLive('lut', 'amount', lutAmount)
+  })
+
+  loadStack(PRESETS.dreamy)         // opens on text, softly graded
   tulle.start(() => tulle.render(currentSource()))
 </script>
 

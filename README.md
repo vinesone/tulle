@@ -158,7 +158,7 @@ tulle.composite([
   { source: title, blend: 'screen', opacity: 0.8 },
 ])
 .post(['grade', 'vignette'])
-.start(() => tulle.render())   // each layer carries its own source
+.play()   // composite mode: each layer carries its own source
 ```
 
 Blend modes: `over` `add` `screen`. In this mode `set()` drives the post chain;
@@ -218,6 +218,24 @@ import { makeLut } from 'tulle/effects'
 const warm = makeLut(32, (r, g, b) => [r * 1.15 + 0.04, g, b * 0.85])
 tulle.chain([{ name: 'lut', params: { lut: warm } }])
 ```
+
+### Loading a `.cube` (Premiere Pro / DaVinci Resolve)
+
+Grades exported as `.cube` 3D LUTs from Premiere or Resolve load directly.
+`lutFromCube()` parses the text and packs it into a LUT canvas; pass its
+`cubeSize` to the effect (LUTs are commonly 33³):
+
+```js
+import { lutFromCube } from 'tulle/effects'
+
+const text  = await fetch('teal-orange.cube').then(r => r.text())
+const grade = lutFromCube(text)      // or from a file input: await file.text()
+
+tulle.chain([{ name: 'lut', params: { lut: grade, size: grade.cubeSize } }])
+```
+
+`parseCube(text)` is also exported if you want the raw `{ size, data }`. The
+playground has a drop-in `.cube` loader.
 
 ## Transparency
 

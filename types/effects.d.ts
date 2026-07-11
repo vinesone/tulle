@@ -42,6 +42,20 @@ export function makeLut(
   fn?: (r: number, g: number, b: number) => [number, number, number],
 ): HTMLCanvasElement
 
+export interface ParsedCube {
+  size: number
+  title: string
+  domainMin: number[]
+  domainMax: number[]
+  data: Float32Array
+}
+
+/** Parse an Adobe/Resolve `.cube` 3D LUT (text) into its size and RGB data. */
+export function parseCube(text: string): ParsedCube
+
+/** Build a LUT canvas from `.cube` text; the canvas carries its edge as `cubeSize`. Browser only. */
+export function lutFromCube(text: string): HTMLCanvasElement & { cubeSize: number }
+
 export class Over extends Effect {}
 export class Add extends Effect {}
 export class Screen extends Effect {}

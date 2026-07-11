@@ -35,7 +35,7 @@ export { Blur, Sharpen }                                       // focus
 export { Grain, Vignette, ChromaticAberration, Scanlines, Vhs } // film
 export { Shatter, Pixelate, Ripple, Shockwave, BlastField }   // distort
 export { Posterize, Threshold, EdgeDetect }                   // stylize
-export { makeLut } from './color/Lut.js'
+export { makeLut, parseCube, lutFromCube } from './color/Lut.js'
 export { Over, Add, Screen, blends, blendNames } from './blend/Blend.js'
 
 /** Canonical registry names for the built-in effects, blend modes included. */

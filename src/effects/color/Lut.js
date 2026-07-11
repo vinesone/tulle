@@ -102,3 +102,75 @@ export function makeLut(size = 32, fn = (r, g, b) => [r, g, b]) {
 }
 
 const clamp255 = v => Math.max(0, Math.min(255, Math.round(v * 255)))
+
+/**
+ * Parse an Iridas/Adobe `.cube` 3D LUT — the format Premiere Pro and DaVinci
+ * Resolve both export — into `{ size, data, title, domainMin, domainMax }`.
+ *
+ * `data` is a flat Float32Array of RGB triples in the file's native order (red
+ * fastest, then green, then blue), length `size³·3`. Pure text-in, so it runs
+ * anywhere; turn it into a usable LUT with lutFromCube().
+ *
+ * @param {string} text — contents of a .cube file
+ */
+export function parseCube(text) {
+  let size = 0
+  let title = ''
+  let domainMin = [0, 0, 0]
+  let domainMax = [1, 1, 1]
+  const data = []
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+
+    const upper = line.toUpperCase()
+    if (upper.startsWith('TITLE'))       { title = line.slice(line.indexOf('"') + 1, line.lastIndexOf('"')); continue }
+    if (upper.startsWith('LUT_3D_SIZE')) { size = parseInt(line.split(/\s+/)[1], 10); continue }
+    if (upper.startsWith('LUT_1D_SIZE'))
+      throw new Error('parseCube: 1D LUTs are not supported — export a 3D LUT (LUT_3D_SIZE).')
+    if (upper.startsWith('DOMAIN_MIN'))  { domainMin = line.split(/\s+/).slice(1).map(Number); continue }
+    if (upper.startsWith('DOMAIN_MAX'))  { domainMax = line.split(/\s+/).slice(1).map(Number); continue }
+
+    // A data row is three floats; any other keyword line (e.g. an input range)
+    // parses to a NaN and is skipped.
+    const p = line.split(/\s+/).map(Number)
+    if (p.length >= 3 && p[0] === p[0] && p[1] === p[1] && p[2] === p[2]) data.push(p[0], p[1], p[2])
+  }
+
+  if (!size) throw new Error('parseCube: missing LUT_3D_SIZE — is this a 3D .cube file?')
+  const want = size * size * size * 3
+  if (data.length !== want)
+    throw new Error(`parseCube: expected ${want / 3} entries for size ${size}, got ${data.length / 3}.`)
+
+  return { size, title, domainMin, domainMax, data: Float32Array.from(data) }
+}
+
+/**
+ * Build a LUT canvas from `.cube` text, ready for the `lut` param — the bridge
+ * from a Premiere/Resolve export to Tulle:
+ *
+ *   const res  = await fetch('teal-orange.cube').then(r => r.text())
+ *   const grade = lutFromCube(res)
+ *   tulle.chain([{ name: 'lut', params: { lut: grade, size: grade.cubeSize } }])
+ *
+ * Routes through makeLut(), so the packing always matches what the `lut` shader
+ * expects. The returned canvas carries its cube edge as `.cubeSize`.
+ *
+ * @param {string} text — contents of a .cube file
+ * @returns {HTMLCanvasElement}
+ */
+export function lutFromCube(text) {
+  const { size, data } = parseCube(text)
+  const canvas = makeLut(size, (r, g, b) => {
+    // makeLut feeds cell centres as ri/(size-1); recover the integer index and
+    // read the cube entry (red fastest, then green, then blue).
+    const ri = Math.round(r * (size - 1))
+    const gi = Math.round(g * (size - 1))
+    const bi = Math.round(b * (size - 1))
+    const i = (ri + gi * size + bi * size * size) * 3
+    return [data[i], data[i + 1], data[i + 2]]
+  })
+  canvas.cubeSize = size
+  return canvas
+}
