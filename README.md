@@ -1,7 +1,7 @@
 # Tulle
 
-Web Library (GL) - That provides a modern api to use Effect Shaders, with needing to write shaders.
-While being open for extending with custom shaders. 
+Web Library (GL) - That provides a modern api to use Effect Shaders, without the need to write shaders.
+All while being open for extension with custom shaders. 
 
 **[Live examples →](https://vinesone.github.io/tulle/)**
 
