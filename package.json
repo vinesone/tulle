@@ -33,6 +33,7 @@
   "files": [
     "src",
     "types",
+    "guide",
     "README.md",
     "LICENSE"
   ],
