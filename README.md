@@ -1,6 +1,7 @@
 # Tulle
 
-Shader effects for developers who don't want to write shaders.
+Web Library (GL) - That provides a modern api to use Effect Shaders, with needing to write shaders.
+While being open for extending with custom shaders. 
 
 **[Live examples →](https://vinesone.github.io/tulle/)**
 
