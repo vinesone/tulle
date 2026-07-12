@@ -11,7 +11,7 @@
  * memory proportional to the clip — fine for the offline exports this is for.
  *
  * The fiddly, error-prone part — EBML variable-length integers — is pure and
- * exported, so it is unit-tested (scripts/webm.test.mjs) without a browser. The
+ * exported, so it is unit-tested (test/export.test.mjs) without a browser. The
  * assembly itself is browser-verified via examples/export.html.
  *
  *   const w = new WebMWriter({ width: 1280, height: 720, codec: 'V_VP9', frameRate: 30 })

@@ -40,7 +40,7 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node scripts/pool.test.mjs && node scripts/composite.test.mjs && node scripts/transform.test.mjs && node scripts/effect.test.mjs && node scripts/text.test.mjs && node scripts/clip.test.mjs && node scripts/layout.test.mjs && node scripts/animate.test.mjs && node scripts/export.test.mjs && node scripts/cube.test.mjs",
+    "test": "node test/pool.test.mjs && node test/composite.test.mjs && node test/transform.test.mjs && node test/effect.test.mjs && node test/text.test.mjs && node test/clip.test.mjs && node test/layout.test.mjs && node test/animate.test.mjs && node test/export.test.mjs && node test/cube.test.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
