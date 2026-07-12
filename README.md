@@ -13,6 +13,19 @@ a video — and cleans up after itself. No build step, no dependencies, no
 npm install tulle
 ```
 
+## Contents
+
+- [Quick start](#quick-start)
+- **Effects** — [built-ins](#effects) · [animated params](#animated-params) ·
+  [the pointer](#reacting-to-the-pointer) · [writing your own](#writing-an-effect) ·
+  [colour lookup tables](#colour-lookup-tables)
+- **Compositing** — [layers](#compositing-layers) · [placing layers](#placing-layers) ·
+  [flow layout](#flow-layout) · [scrolling](#scrolling)
+- **Sources** — [video clips](#video-clips) · [text](#text)
+- **Rendering** — [transparency](#transparency) ·
+  [deterministic rendering](#deterministic-rendering) · [lifecycle](#lifecycle)
+- [Examples](#examples)
+
 ## Quick start
 
 ```js
@@ -87,7 +100,9 @@ tulle.chain([
 tulle.set('ripple', { center: ({ pointer }) => [pointer.u, pointer.v] })
 ```
 
-The context is `{ time, delta, frame, pointer, width, height }`.
+The context is `{ time, delta, frame, pointer, scrollX, scrollY }`. The same
+contract runs through the whole library: [layout](#flow-layout) sizes and
+offsets accept these functions too.
 
 ## Reacting to the pointer
 
@@ -148,6 +163,37 @@ Every shader can read these, bound automatically if you declare them:
 
 Omit `static uniforms` and Tulle infers the type from the default value.
 
+## Colour lookup tables
+
+The `lut` effect grades through a 3D LUT. An effect can declare a `'sampler2D'`
+param and Tulle uploads any image-like value into its own texture unit — LUTs,
+masks, displacement maps. `makeLut()` builds one from a colour function:
+
+```js
+import { makeLut } from 'tulle/effects'
+
+const warm = makeLut(32, (r, g, b) => [r * 1.15 + 0.04, g, b * 0.85])
+tulle.chain([{ name: 'lut', params: { lut: warm } }])
+```
+
+### Loading a `.cube` (Premiere Pro / DaVinci Resolve)
+
+Grades exported as `.cube` 3D LUTs from Premiere or Resolve load directly.
+`lutFromCube()` parses the text and packs it into a LUT canvas; pass its
+`cubeSize` to the effect (LUTs are commonly 33³):
+
+```js
+import { lutFromCube } from 'tulle/effects'
+
+const text  = await fetch('teal-orange.cube').then(r => r.text())
+const grade = lutFromCube(text)      // or from a file input: await file.text()
+
+tulle.chain([{ name: 'lut', params: { lut: grade, size: grade.cubeSize } }])
+```
+
+`parseCube(text)` is also exported if you want the raw `{ size, data }`. The
+playground has a drop-in `.cube` loader.
+
 ## Compositing layers
 
 Beyond a single source, `composite()` stacks layers — each with its own source,
@@ -183,6 +229,130 @@ tulle.composite([
 tulle.setLayerTransform(1, Transform.identity().scale(0.4).rotate(angle))
 ```
 
+## Flow layout
+
+Hand-placing transforms doesn't scale past a few layers. `tulle.layout()` takes
+a tree of boxes and solves where each one lands, CSS-style — then feeds the
+result into the same composite path, one transform per box. The renderer never
+learns what "inline" means.
+
+```js
+import { box, block, inline } from 'tulle'   // also on 'tulle/ready'
+
+tulle.layout(
+  block([
+    tulle.clip('film.mp4'),               // a raw source becomes an inline box
+    box(title, { blend: 'screen' }),
+    block([box(a), box(b)], { gap: 24 }),  // a block breaks the line and stacks
+  ], { gap: 24, padding: 40 })
+)
+```
+
+The model is deliberately CSS-shaped, because that mental model is universal:
+
+- `inline([...])` flows children left-to-right and **wraps**; `block([...])`
+  stacks them top-to-bottom. Containers nest freely.
+- `box(source, opts)` is a leaf. A bare source is coerced to an inline box.
+- Boxes are sized explicitly (`width`/`height` — give one and the other follows
+  the source's aspect) or intrinsically from the source, shrunk to fit the
+  available width.
+
+Layout is solved in **design-space pixels** (top-left origin, like Text) and
+re-solved every frame — so it reacts live to a video's size arriving, a resize,
+or an animated option. A [Clip](#video-clips) that isn't `ready` yet measures
+0×0 and is hidden, then takes its place the moment its dimensions are known.
+
+Container options: `gap`, `padding`, `width`, `height`, `align`
+(`start | center | end`, cross-axis), `justify`
+(`start | center | end | between`, main axis), `display` (override
+inline/block).
+
+Box options: `width`, `height`, `margin` (number or per-side), `fit`
+(`contain` letterboxes — the default; `cover` centre-crops; `fill` stretches),
+plus the layer options you already know — `effects`, `blend`, `opacity`.
+
+Positioning works like CSS too: `position: 'static'` (flow, the default),
+`'relative'` (nudge from the flow slot via `offset: { left, top, right,
+bottom }`; siblings keep the original space), `'absolute'` (out of flow, pinned
+to the nearest positioned ancestor), and `'fixed'` (pinned to the viewport —
+it ignores [scroll](#scrolling)).
+
+And because layout options ride the same frame-context contract as effect
+params, **any size or offset can be a function of time** — that's animation and
+scroll-linked motion with no extra machinery:
+
+```js
+box(title, {
+  position: 'absolute', width: W, height: 90,
+  offset: { top: ctx => 40 + Math.sin(ctx.time * 1.2) * 14 },
+  opacity: ctx => 1 - ctx.scrollY / 600,
+})
+```
+
+### Scrolling
+
+Content bigger than the frame can scroll — the viewport pans over the
+composition, not the DOM:
+
+```js
+tulle.layout(tree, { scroll: 'y' })   // true → 'y'; also 'x' | 'both'
+
+tulle.scrollTo(0, 1200)               // absolute, clamped to the content
+tulle.scrollBy(0, dy)                 // relative — wire it to touch, keys, anything
+```
+
+With `scroll` enabled the mouse wheel just works, `position: 'fixed'` boxes
+stay pinned (a HUD, a progress bar), and `scrollX` / `scrollY` /
+`tulle.scrollMax` let any param be a function of scroll position. The
+[scroll example](https://vinesone.github.io/tulle/) is built entirely on this.
+
+## Video clips
+
+`tulle.clip()` wraps a `<video>` into a **source with a lifecycle**. It drops
+into any layer — blur it, blend it, place it with a `Transform` or a layout box
+— and replaces the half-dozen quirky native media events with a small, clean
+vocabulary:
+
+```js
+const clip = tulle.clip('film.mp4', { autoplay: true, loop: true })
+
+clip.on('ready', ({ width, height, duration }) => layout())  // first decodable frame
+clip.on('end',   () => showOutro())
+clip.at('1:30',  () => showLowerThird())   // one-shot timeline cue
+clip.every(5,    t  => pulse())            // every 5 seconds of playback
+
+tulle.composite([{ source: clip }]).play()
+```
+
+Pass a URL (Tulle creates and owns the element) or an existing
+`HTMLVideoElement` (adopted). Options: `muted` (default `true` — required for
+unattended autoplay), `autoplay`, `loop`, `playsInline` (default `true`),
+`crossOrigin` (**set `'anonymous'` for cross-origin video**, or the texture
+upload taints the canvas and throws), `preload`.
+
+**Transport** — `play()` (returns the browser's play promise), `pause()`,
+`seek(t)`, `seekTo(t)` (resolves once the frame at `t` is decoded — what export
+needs), `rate(x)`, `volume(v)`, `mute()`, `unmute()`. Times are seconds or
+`"mm:ss"` strings (`'1:30'`, `'1:23.5'`). `whenReady()` is readiness as a
+promise. Intrinsic `width` / `height` / `aspect` / `duration` are how a clip
+tells [layout](#flow-layout) how big it is.
+
+**Events** — `load`, `ready`, `play`, `pause`, `time` (per rendered frame, not
+`timeupdate`'s ~4 Hz), `end`, `loop` (looping clips never fire native `ended`;
+Tulle detects the wrap), `waiting`, `error`, `unload`. `load` and `ready` are
+**latched**: subscribe after they happened and the handler still fires, so
+`clip.on('ready', …)` works even for a cached video.
+
+**Cues** — `at(time, fn)` fires once when playback crosses `time`; `every(n,
+fn)` fires each interval. Both return an unsubscribe function, like `on()`.
+Cues are driven by the render loop against the *film's* position, not the wall
+clock — a seek or a scrub re-arms them instead of dumping a burst of callbacks,
+and they fire identically in a live preview and a deterministic `renderAt()`
+export.
+
+`tulle.clip()` ties the clip's teardown to the Tulle instance; `new Clip(...)`
+(exported from `tulle`) is the standalone form you dispose yourself.
+
 ## Text
 
 Type is a layer source. `Text` typesets a styled block into a frame-sized canvas,
@@ -206,37 +376,6 @@ title.update({ color: '#ffffff' })   // restyle live
 `size`, `weight`, `italic`, `color`, `lineHeight`, `letterSpacing`, `align`,
 `vAlign`, `padding`, `maxWidth` (wraps), `background`, `shadow`, `stroke`. Text is
 re-rasterised only when it changes, and it's DPR-aware for crisp glyphs.
-
-## Colour lookup tables
-
-The `lut` effect grades through a 3D LUT. An effect can declare a `'sampler2D'`
-param and Tulle uploads any image-like value into its own texture unit — LUTs,
-masks, displacement maps. `makeLut()` builds one from a colour function:
-
-```js
-import { makeLut } from 'tulle/effects'
-
-const warm = makeLut(32, (r, g, b) => [r * 1.15 + 0.04, g, b * 0.85])
-tulle.chain([{ name: 'lut', params: { lut: warm } }])
-```
-
-### Loading a `.cube` (Premiere Pro / DaVinci Resolve)
-
-Grades exported as `.cube` 3D LUTs from Premiere or Resolve load directly.
-`lutFromCube()` parses the text and packs it into a LUT canvas; pass its
-`cubeSize` to the effect (LUTs are commonly 33³):
-
-```js
-import { lutFromCube } from 'tulle/effects'
-
-const text  = await fetch('teal-orange.cube').then(r => r.text())
-const grade = lutFromCube(text)      // or from a file input: await file.text()
-
-tulle.chain([{ name: 'lut', params: { lut: grade, size: grade.cubeSize } }])
-```
-
-`parseCube(text)` is also exported if you want the raw `{ size, data }`. The
-playground has a drop-in `.cube` loader.
 
 ## Transparency
 
@@ -272,11 +411,19 @@ them locally:
 npm run dev     # http://localhost:8080/examples/
 ```
 
+- **the web is video** — the fullscreen showcase: one `tulle.layout()` scroll
+  composition, real footage via `tulle.clip()`, kinetic type, scroll-linked
+  post effects.
 - **playground** — build an effect chain live: swap effects with dropdowns,
   reorder, tune sliders, switch source (pattern / text / video), load presets.
+- **layout** — the flow engine: boxes pack inline and wrap, blocks stack,
+  relative/absolute/fixed positioning, animated offsets.
+- **scroll** — a scrolling composition: content pans with the wheel, fixed
+  boxes stay pinned, params as functions of `scrollY`.
 - **VHS** — a generated Outrun scene + OSD, composited and run through a layered
   analog chain with the `vhs` effect. Whack the VCR.
 - **explode** — click to melt and explode the text, click again to reassemble.
+- **export** — deterministic frame-exact rendering out to a WebM file.
 - **custom effect** — write your own: a fragment shader plus a defaults object.
 
 ## License
