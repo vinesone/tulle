@@ -1,7 +1,7 @@
 {
   "name": "tulle",
-  "version": "0.1.0",
-  "description": "Shader effects for developers without the need to write GLSL. Tulle is a lightweight library that allows you to apply shader effects to HTML5 canvas and video elements.",
+  "version": "1.0.0",
+  "description": "A WebGL2 effects and compositing library — shader effect chains, layers, CSS-like layout, kinetic text, video clips with timeline cues, and deterministic WebM export. No GLSL to write, no build step, no dependencies.",
   "type": "module",
   "license": "MIT",
   "author": "Alan Siegler",
@@ -46,13 +46,19 @@
   },
   "keywords": [
     "webgl",
+    "webgl2",
     "shader",
     "effects",
     "postprocessing",
+    "compositing",
     "canvas",
     "video",
     "filter",
-    "glsl"
+    "glsl",
+    "lut",
+    "color-grading",
+    "layout",
+    "animation"
   ],
   "engines": {
     "node": ">=22"
