@@ -119,6 +119,39 @@ const solveScroll = (root, scroll, w = 100, h = 100) => solveLayout(root, { widt
   ok(near(m[6], -0.5) && near(m[7], 0.5), 'matrix: top-left quarter centre maps up-left (y flipped)')
 }
 
+// ── rectToMatrix: paint-time rotate/scale about the box centre ───────────────
+const apply = (m, x, y) => [m[0] * x + m[3] * y + m[6], m[1] * x + m[4] * y + m[7]]
+{
+  // scale 0.5 about the centre: same centre, quarter size.
+  const m = rectToMatrix({ x: 0, y: 0, w: 50, h: 50 }, { width: 100, height: 100 }, 0, 0.5)
+  ok(near(m[0], 0.25) && near(m[4], 0.25), 'matrix scale: shrinks about the centre')
+  ok(near(m[6], -0.5) && near(m[7], 0.5), 'matrix scale: centre stays put')
+}
+{
+  // per-axis scale: [2, 1] doubles width only.
+  const m = rectToMatrix({ x: 0, y: 0, w: 50, h: 50 }, { width: 100, height: 100 }, 0, [2, 1])
+  ok(near(m[0], 1) && near(m[4], 0.5), 'matrix scale: [sx, sy] per axis')
+}
+{
+  // 90° CCW about the centre of a centred square box: the quad's +x corner lands up.
+  const m = rectToMatrix({ x: 25, y: 25, w: 50, h: 50 }, { width: 100, height: 100 }, Math.PI / 2)
+  const [px, py] = apply(m, 1, 0)
+  ok(near(px, 0) && near(py, 0.5), 'matrix rotate: 90° sends +x to +y (counter-clockwise)')
+}
+{
+  // Non-square frame: rotation composes in pixel space, so the box keeps its shape —
+  // a square's rotated +x extent lands at 25px up = 0.5 clip on a 100px-tall frame.
+  const m = rectToMatrix({ x: 75, y: 25, w: 50, h: 50 }, { width: 200, height: 100 }, Math.PI / 2)
+  const [px, py] = apply(m, 1, 0)
+  ok(near(px, 0) && near(py, 0.5), 'matrix rotate: conformal on a non-square frame')
+}
+{
+  // rotate 0 / scale 1 is exactly the fast path.
+  const a = rectToMatrix({ x: 10, y: 20, w: 30, h: 40 }, { width: 100, height: 100 })
+  const b = rectToMatrix({ x: 10, y: 20, w: 30, h: 40 }, { width: 100, height: 100 }, 0, 1)
+  ok([...a].every((v, i) => near(v, b[i])), 'matrix: defaults match the untransformed path')
+}
+
 // ── fitRect: contain letterboxes, fill stretches, cover keeps the box ────────
 {
   // A 2:1 source in a 1:1 box, contain → full width, half height, centred vertically.

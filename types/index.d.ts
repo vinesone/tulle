@@ -269,9 +269,49 @@ export function dueCues(
 /** Coerce seconds or "mm:ss" to seconds. */
 export function parseTime(t: TimeLike): number
 
+// ── Draw ─────────────────────────────────────────────────────────────────────
+
+/** The frame context handed to a Draw painter, plus the surface size. */
+export type DrawFrame = Partial<FrameContext> & { width: number; height: number }
+
+/** Painter callback: repaint the surface for this frame. */
+export type Painter = (ctx: CanvasRenderingContext2D, frame: DrawFrame) => void
+
+/**
+ * A canvas source painted by a callback, re-run once per rendered frame.
+ * Canvas 2D is the drawing API; Draw owns only the lifecycle. `new Draw(...)`
+ * is caller-owned; `tulle.draw(...)` is owned by the Tulle.
+ */
+export class Draw implements TexSource {
+  constructor(fn: Painter, options: { width: number; height: number })
+  readonly texSource: HTMLCanvasElement
+  readonly canvas: HTMLCanvasElement
+  readonly width: number
+  readonly height: number
+  /** Resize the surface (clears it). */
+  resize(width: number, height: number): this
+  /** Swap the painter; the next frame paints with it. */
+  set(fn: Painter): this
+  /** Repaint. Called once per rendered frame by Tulle. */
+  advance(frame?: FrameContext): void
+  destroy(): void
+}
+
+/** A gradient stop: an [offset, color] pair (0..1), or a bare color spread evenly. */
+export type GradientStop = [number, string] | string
+
+/**
+ * A dithered linear-gradient canvas — banding-free backdrops. `angle` is in
+ * degrees: 0 sweeps left→right, 90 top→bottom (default 90).
+ */
+export function gradient(
+  stops: GradientStop[],
+  options: { width: number; height: number; angle?: number; dither?: boolean },
+): HTMLCanvasElement
+
 // ── Layout ─────────────────────────────────────────────────────────────────
 
-/** How a box fills its solved rect. `cover` is not yet clipped and falls back to `contain`. */
+/** How a box fills its solved rect: `contain` letterboxes, `cover` centre-crops via UV, `fill` stretches. */
 export type Fit = 'contain' | 'cover' | 'fill'
 
 /** Offsets for relative/absolute positioning, in design px. Each may be a function of time. */
@@ -308,6 +348,12 @@ export interface BoxOptions {
   blend?: string
   /** Opacity 0..1. May be a function of time. Default 1. */
   opacity?: Animatable<number>
+  /** Paint-time rotation about the box centre, radians, counter-clockwise.
+   *  CSS-transform semantics: the box keeps its flow slot. May be a function of time. */
+  rotate?: Animatable<number>
+  /** Paint-time scale about the box centre — a factor, or [sx, sy]. Keeps the flow
+   *  slot. May be a function of time. Default 1. */
+  scale?: Animatable<number | [number, number]>
 }
 
 export interface ContainerOptions extends BoxOptions {
@@ -350,8 +396,14 @@ export function solveLayout(
   scroll: { x: number; y: number }
 }
 
-/** Map the fullscreen quad onto a design-space rect, in clip space. */
-export function rectToMatrix(rect: Rect, frame: { width: number; height: number }): Float32Array
+/** Map the fullscreen quad onto a design-space rect, in clip space. `rotate` (radians,
+ *  counter-clockwise) and `scale` apply about the rect centre, after layout. */
+export function rectToMatrix(
+  rect: Rect,
+  frame: { width: number; height: number },
+  rotate?: number,
+  scale?: number | [number, number],
+): Float32Array
 /** Inset a source of aspect `srcAspect` inside its box per the fit rule. */
 export function fitRect(box: Rect, srcAspect: number, fit: Fit): Rect
 /** The UV crop [offsetX, offsetY, scaleX, scaleY] for `cover` fit; identity means no crop. */
@@ -394,6 +446,54 @@ export function keyframes<T extends number | number[]>(
 /** A sine oscillator between `from` and `to`; a function of the frame context. */
 export function wave(
   options?: { from?: number; to?: number; hz?: number; phase?: number; by?: string },
+): (ctx: FrameContext) => number
+
+export interface TweenOptions {
+  /** Length of the transition in seconds. Default 0.6. */
+  duration?: number
+  /** Seconds to wait after the start before moving. Default 0. */
+  delay?: number
+  /** Easing name or curve. Default 'outCubic'. */
+  ease?: Ease
+  /** Explicit start time in seconds. Omit to latch on first evaluation. */
+  at?: number
+  /** Context field to read time from. Default 'time'. */
+  by?: string
+}
+
+/**
+ * A one-shot transition from `from` to `to`; a function of the frame context.
+ * The start latches on first evaluation unless `at` pins it.
+ */
+export function tween(
+  options?: TweenOptions & { from?: number | number[]; to?: number | number[] },
+): (ctx: FrameContext) => number | number[]
+
+/** Opacity 0 → 1. */
+export function fadeIn(options?: TweenOptions): (ctx: FrameContext) => number
+/** Opacity 1 → 0. */
+export function fadeOut(options?: TweenOptions): (ctx: FrameContext) => number
+/** From `distance` px away, settling at the flow position — drive an offset side. */
+export function slideFrom(distance: number, options?: TweenOptions): (ctx: FrameContext) => number
+/** From the flow position, departing to `distance` px away. */
+export function slideTo(distance: number, options?: TweenOptions): (ctx: FrameContext) => number
+/** From `factor` of the box size, settling at full size — drive the box `scale`. */
+export function scaleFrom(factor: number, options?: TweenOptions): (ctx: FrameContext) => number
+/** From full size, ending at `factor` of the box size. */
+export function scaleTo(factor: number, options?: TweenOptions): (ctx: FrameContext) => number
+/** From `angle` radians (counter-clockwise), settling upright — drive the box `rotate`. */
+export function rotateFrom(angle: number, options?: TweenOptions): (ctx: FrameContext) => number
+/** From upright, ending at `angle` radians. */
+export function rotateTo(angle: number, options?: TweenOptions): (ctx: FrameContext) => number
+
+/**
+ * Scroll-linked progress: 0 before `start`, 1 after `end`, eased in between.
+ * `start > end` runs in reverse. `by` defaults to 'scrollY'.
+ */
+export function scrollRange(
+  start: number,
+  end: number,
+  options?: { ease?: Ease; by?: string },
 ): (ctx: FrameContext) => number
 
 // ── Offline export ───────────────────────────────────────────────────────────
@@ -550,6 +650,10 @@ export class Tulle {
   text(text: string, options?: TextOptions): Text
   /** A video Clip source, owned by this Tulle (destroyed with it). Keep it to drive playback and cues. */
   clip(src: string | HTMLVideoElement, options?: ClipOptions): Clip
+  /** A Draw source sized to this canvas, owned by this Tulle — repainted by `fn` once per rendered frame. */
+  draw(fn: Painter, options?: { width?: number; height?: number }): Draw
+  /** A dithered linear-gradient canvas sized to this canvas. */
+  gradient(stops: GradientStop[], options?: { width?: number; height?: number; angle?: number; dither?: boolean }): HTMLCanvasElement
   /** Arrange sources with a flow layout (inline/block, relative/absolute/fixed). Re-solved each frame. */
   layout(
     node: LayoutNode | Array<LayoutNode | Source> | Source,

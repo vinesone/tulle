@@ -7,7 +7,10 @@
  *
  *   npm test
  */
-import { keyframes, wave, easings, lerp } from '../src/core/animate.js'
+import {
+  keyframes, wave, easings, lerp,
+  tween, fadeIn, fadeOut, slideFrom, slideTo, scaleFrom, rotateTo, scrollRange,
+} from '../src/core/animate.js'
 
 let failed = 0
 const near = (a, b) => Math.abs(a - b) < 1e-6
@@ -75,6 +78,70 @@ ok(easings.inQuad(0.5)  < 0.5, 'inQuad: accelerates (behind at the midpoint)')
   eqN(w({ time: 0 }),    5,  'wave: starts mid-swing (sin 0)')
   eqN(w({ time: 0.25 }), 10, 'wave: peak at a quarter cycle')
   eqN(w({ time: 0.75 }), 0,  'wave: trough at three-quarters')
+}
+
+// ── tween: latches its start on first evaluation ─────────────────────────────
+{
+  const t = tween({ from: 0, to: 10, duration: 1, ease: 'linear' })
+  eqN(t({ time: 5 }),   0,  'tween: first evaluation latches the start (value = from)')
+  eqN(t({ time: 5.5 }), 5,  'tween: halfway through the duration')
+  eqN(t({ time: 6 }),   10, 'tween: done at start + duration')
+  eqN(t({ time: 9 }),   10, 'tween: clamps at to')
+}
+
+// ── tween: explicit start, delay, zero duration, default ease ────────────────
+{
+  const t = tween({ at: 2, duration: 1, ease: 'linear' })
+  eqN(t({ time: 0 }),   0,   'tween at: holds from before the pinned start')
+  eqN(t({ time: 2.5 }), 0.5, 'tween at: progresses from the pinned start')
+}
+{
+  const t = tween({ at: 0, delay: 1, duration: 1, ease: 'linear' })
+  eqN(t({ time: 0.5 }), 0,   'tween delay: holds through the delay')
+  eqN(t({ time: 1.5 }), 0.5, 'tween delay: then progresses')
+}
+{
+  const t = tween({ at: 1, duration: 0 })
+  eqN(t({ time: 0.9 }), 0, 'tween duration 0: from before the start')
+  eqN(t({ time: 1 }),   1, 'tween duration 0: jumps straight to to')
+}
+{
+  const t = tween({ at: 0, duration: 1 }) // default ease is outCubic
+  ok(t({ time: 0.5 }) > 0.5, 'tween: default outCubic is ahead at the midpoint')
+}
+
+// ── the named wrappers map intent onto from/to ───────────────────────────────
+{
+  const lin = { at: 0, duration: 1, ease: 'linear' }
+  eqN(fadeIn(lin)({ time: 0 }),  0,  'fadeIn: starts transparent')
+  eqN(fadeIn(lin)({ time: 1 }),  1,  'fadeIn: ends opaque')
+  eqN(fadeOut(lin)({ time: 0 }), 1,  'fadeOut: starts opaque')
+  eqN(fadeOut(lin)({ time: 1 }), 0,  'fadeOut: ends transparent')
+  eqN(slideFrom(60, lin)({ time: 0.5 }), 30, 'slideFrom: halfway home')
+  eqN(slideFrom(60, lin)({ time: 1 }),   0,  'slideFrom: settles at the flow position')
+  eqN(slideTo(60, lin)({ time: 1 }),     60, 'slideTo: departs to the distance')
+  eqN(scaleFrom(0.5, lin)({ time: 0.5 }), 0.75, 'scaleFrom: grows toward 1')
+  eqN(rotateTo(Math.PI, lin)({ time: 1 }), Math.PI, 'rotateTo: reaches the angle')
+}
+
+// ── scrollRange: progress between two scroll offsets ─────────────────────────
+{
+  const r = scrollRange(100, 200)
+  eqN(r({ scrollY: 50 }),  0,   'scrollRange: 0 before start')
+  eqN(r({ scrollY: 150 }), 0.5, 'scrollRange: midpoint')
+  eqN(r({ scrollY: 250 }), 1,   'scrollRange: 1 after end')
+}
+{
+  const r = scrollRange(200, 100) // reversed: 1 → 0 as scroll grows
+  eqN(r({ scrollY: 50 }),  1, 'scrollRange reversed: 1 before the (higher) start')
+  eqN(r({ scrollY: 250 }), 0, 'scrollRange reversed: 0 after the (lower) end')
+}
+{
+  const r = scrollRange(100, 100) // degenerate range → a step
+  eqN(r({ scrollY: 99 }),  0, 'scrollRange step: 0 below')
+  eqN(r({ scrollY: 100 }), 1, 'scrollRange step: 1 at the mark')
+  const x = scrollRange(0, 100, { by: 'scrollX' })
+  eqN(x({ scrollX: 50 }), 0.5, 'scrollRange: by scrollX')
 }
 
 console.log('')

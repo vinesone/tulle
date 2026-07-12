@@ -6,6 +6,7 @@ import { Pointer }  from './Pointer.js'
 import { toMatrix } from './Transform.js'
 import { Text }     from './Text.js'
 import { Clip }     from './Clip.js'
+import { Draw, gradient } from './Draw.js'
 import { coerceRoot, flattenLeaves, solveLayout, rectToMatrix, fitRect, coverUV, intrinsicSize, aspectOf, HIDDEN } from './Layout.js'
 import { record as recordVideo, walkFrames } from './Recorder.js'
 
@@ -477,6 +478,46 @@ export class Tulle {
     return this.#scope.own(new Clip(src, options))
   }
 
+  /**
+   * Create a Draw source sized to this canvas — a 2D surface repainted by your
+   * callback once per rendered frame. Owned by this Tulle (destroyed with it).
+   * Canvas 2D is the drawing API; Tulle only owns the lifecycle.
+   *
+   *   const scene = tulle.draw((ctx, { time, width, height }) => { … })
+   *   tulle.layout(block([scene, title]))
+   *
+   * Use `new Draw(...)` directly if you want to own its teardown yourself.
+   *
+   * @param {(ctx: CanvasRenderingContext2D, frame: object) => void} fn
+   * @param {{ width?: number, height?: number }} [options]
+   * @returns {Draw}
+   */
+  draw(fn, options = {}) {
+    return this.#scope.own(new Draw(fn, {
+      width:  this.#canvas.width,
+      height: this.#canvas.height,
+      ...options,
+    }))
+  }
+
+  /**
+   * A dithered linear-gradient canvas sized to this canvas — the everyday
+   * backdrop source. Sugar for `gradient(stops, { width, height, … })`.
+   *
+   *   tulle.layout(block([ box(tulle.gradient(['#241448', '#05060f'])), title ]))
+   *
+   * @param {Array<[number, string] | string>} stops
+   * @param {{ width?: number, height?: number, angle?: number, dither?: boolean }} [options]
+   * @returns {HTMLCanvasElement}
+   */
+  gradient(stops, options = {}) {
+    return gradient(stops, {
+      width:  this.#canvas.width,
+      height: this.#canvas.height,
+      ...options,
+    })
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   /**
@@ -774,8 +815,11 @@ export class Tulle {
       const box = rects[i]
       if (!box || !(box.w > 0) || !(box.h > 0)) { this.setLayerTransform(i, HIDDEN); continue }
       const aspect = aspectOf(leaf.source)
+      // Paint-time rotate/scale about the box centre; may be functions of time.
+      const rotate = typeof leaf.rotate === 'function' ? leaf.rotate(ctx) : leaf.rotate
+      const scale  = typeof leaf.scale  === 'function' ? leaf.scale(ctx)  : leaf.scale
       // contain/fill are geometry; cover keeps the full box and crops via UV.
-      this.setLayerTransform(i, rectToMatrix(fitRect(box, aspect, leaf.fit), this.#layoutFrame))
+      this.setLayerTransform(i, rectToMatrix(fitRect(box, aspect, leaf.fit), this.#layoutFrame, rotate, scale))
       this.setLayerUV(i, leaf.fit === 'cover' ? coverUV(box, aspect) : null)
     }
   }

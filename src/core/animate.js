@@ -122,3 +122,86 @@ export function wave({ from = 0, to = 1, hz = 1, phase = 0, by = 'time' } = {}) 
     return lerp(from, to, s)
   }
 }
+
+const clamp01 = t => (t < 0 ? 0 : t > 1 ? 1 : t)
+
+/**
+ * A one-shot transition from `from` to `to`. Returns a function of the frame
+ * context, so it drops into any param, offset, or box option.
+ *
+ * The start time **latches on first evaluation** — the tween begins the first
+ * frame its box (or effect) is rendered, which is what an entrance wants. Under
+ * a deterministic renderAt() export the first evaluated time latches the same
+ * way, so preview and export agree. Pass `at` (seconds) to pin the start
+ * explicitly instead — e.g. from a Clip cue.
+ *
+ *   box(title, { opacity: tween({ from: 0, to: 1, duration: 0.6 }) })
+ *
+ * @param {{ from?: number|number[], to?: number|number[], duration?: number,
+ *   delay?: number, ease?: string|Function, at?: number, by?: string }} [options]
+ *   `ease` defaults to 'outCubic'; `by` picks the context field (default 'time').
+ * @returns {(ctx: object) => number|number[]}
+ */
+export function tween({ from = 0, to = 1, duration = 0.6, delay = 0, ease = 'outCubic', at = null, by = 'time' } = {}) {
+  const f = resolveEase(ease)
+  let t0 = at
+  return ctx => {
+    const t = ctx && ctx[by] != null ? ctx[by] : 0
+    if (t0 == null) t0 = t
+    const u = duration > 0 ? clamp01((t - t0 - delay) / duration) : t - t0 >= delay ? 1 : 0
+    return lerp(from, to, f(u))
+  }
+}
+
+/**
+ * Entrance/exit vocabulary — thin named tweens, one per intent. Each takes the
+ * same options as tween() (duration, delay, ease, at, by) and returns a function
+ * of the frame context:
+ *
+ *   box(title, {
+ *     opacity: fadeIn({ duration: 0.6 }),
+ *     offset:  { top: slideFrom(60) },      // slides 60px up into place
+ *     scale:   scaleFrom(0.85),             // grows into place, about the centre
+ *     rotate:  rotateFrom(-0.1),            // radians, counter-clockwise
+ *   })
+ *
+ * fadeIn/fadeOut drive `opacity`; slideFrom/slideTo drive an `offset` side;
+ * scaleFrom/scaleTo drive the box `scale`; rotateFrom/rotateTo the box `rotate`.
+ */
+export function fadeIn(options = {})  { return tween({ from: 0, to: 1, ...options }) }
+export function fadeOut(options = {}) { return tween({ from: 1, to: 0, ...options }) }
+/** From `distance` px away, settling at the flow position. */
+export function slideFrom(distance, options = {}) { return tween({ from: distance, to: 0, ...options }) }
+/** From the flow position, departing to `distance` px away. */
+export function slideTo(distance, options = {})   { return tween({ from: 0, to: distance, ...options }) }
+/** From `factor` of the box size, settling at full size. */
+export function scaleFrom(factor, options = {}) { return tween({ from: factor, to: 1, ...options }) }
+/** From full size, ending at `factor` of the box size. */
+export function scaleTo(factor, options = {})   { return tween({ from: 1, to: factor, ...options }) }
+/** From `angle` radians (counter-clockwise), settling upright. */
+export function rotateFrom(angle, options = {}) { return tween({ from: angle, to: 0, ...options }) }
+/** From upright, ending at `angle` radians. */
+export function rotateTo(angle, options = {})   { return tween({ from: 0, to: angle, ...options }) }
+
+/**
+ * Scroll-linked progress: 0 before `start`, 1 after `end`, eased in between —
+ * the primitive behind "reveal on scroll". Compose it with anything:
+ *
+ *   box(title, { opacity: scrollRange(top - H * 0.9, top - H * 0.3, { ease: 'outCubic' }) })
+ *   tulle.set('blur', { radius: ctx => 20 * (1 - scrollRange(0, 600)(ctx)) })
+ *
+ * `start > end` runs the range in reverse (1 → 0 as scroll grows).
+ *
+ * @param {number} start @param {number} end — scroll offsets in design px.
+ * @param {{ ease?: string|Function, by?: string }} [options] — `by` defaults to
+ *   'scrollY'; use 'scrollX' for a horizontal layout.
+ * @returns {(ctx: object) => number}
+ */
+export function scrollRange(start, end, { ease = 'linear', by = 'scrollY' } = {}) {
+  const f = resolveEase(ease)
+  return ctx => {
+    const s = ctx && ctx[by] != null ? ctx[by] : 0
+    if (start === end) return f(s >= start ? 1 : 0)
+    return f(clamp01((s - start) / (end - start)))
+  }
+}

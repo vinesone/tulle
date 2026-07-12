@@ -16,12 +16,13 @@ npm install tulle
 ## Contents
 
 - [Quick start](#quick-start)
-- **Effects** — [built-ins](#effects) · [animated params](#animated-params) ·
-  [the pointer](#reacting-to-the-pointer) · [writing your own](#writing-an-effect) ·
-  [colour lookup tables](#colour-lookup-tables)
+- **Effects** — [built-ins](#effects) · [the pointer](#reacting-to-the-pointer) ·
+  [writing your own](#writing-an-effect) · [colour lookup tables](#colour-lookup-tables)
+- **Animation** — [animated params](#animated-params) ·
+  [tweens & scroll reveals](#tweens-and-scroll-reveals)
 - **Compositing** — [layers](#compositing-layers) · [placing layers](#placing-layers) ·
   [flow layout](#flow-layout) · [scrolling](#scrolling)
-- **Sources** — [video clips](#video-clips) · [text](#text)
+- **Sources** — [video clips](#video-clips) · [text](#text) · [drawing](#drawing)
 - **Rendering** — [transparency](#transparency) ·
   [deterministic rendering](#deterministic-rendering) · [lifecycle](#lifecycle)
 - [Examples](#examples)
@@ -103,6 +104,38 @@ tulle.set('ripple', { center: ({ pointer }) => [pointer.u, pointer.v] })
 The context is `{ time, delta, frame, pointer, scrollX, scrollY }`. The same
 contract runs through the whole library: [layout](#flow-layout) sizes and
 offsets accept these functions too.
+
+### Tweens and scroll reveals
+
+The helpers in `tulle` are factories that *return* such functions —
+`keyframes()` for tracks, `wave()` for idle sway, and a one-shot `tween()`
+behind a named entrance/exit vocabulary:
+
+```js
+import { fadeIn, slideFrom, scaleFrom, rotateFrom, scrollRange } from 'tulle'
+
+box(title, {
+  opacity: fadeIn({ duration: 0.6, delay: 0.2 }),
+  offset:  { top: slideFrom(60) },   // 60px below, sliding into place
+  scale:   scaleFrom(0.85),          // growing into place, about the centre
+  rotate:  rotateFrom(-0.1),         // radians, settling upright
+})
+```
+
+`fadeIn` / `fadeOut` drive `opacity`; `slideFrom` / `slideTo` drive an `offset`
+side; `scaleFrom` / `scaleTo` and `rotateFrom` / `rotateTo` drive the box
+[`scale` and `rotate`](#flow-layout) options. All take
+`{ duration, delay, ease, at }`. A tween **starts the first frame it's
+evaluated** — an entrance begins when its box first renders, live or under a
+deterministic export — or pass `at` (seconds) to pin the start explicitly,
+e.g. from a [Clip cue](#video-clips).
+
+`scrollRange(start, end)` is the scroll-linked counterpart: 0 before `start`,
+1 after `end`, eased in between. It's the primitive behind "reveal on scroll":
+
+```js
+box(title, { opacity: scrollRange(top - H * 0.9, top - H * 0.3, { ease: 'outCubic' }) })
+```
 
 ## Reacting to the pointer
 
@@ -271,6 +304,12 @@ Box options: `width`, `height`, `margin` (number or per-side), `fit`
 (`contain` letterboxes — the default; `cover` centre-crops; `fill` stretches),
 plus the layer options you already know — `effects`, `blend`, `opacity`.
 
+Two paint-time transforms round it out: `rotate` (radians, counter-clockwise)
+and `scale` (a factor, or `[sx, sy]`) apply about the box centre **after**
+layout, CSS-transform style — the box keeps its flow slot, only the paint
+moves. They're what [`scaleFrom` / `rotateFrom`](#tweens-and-scroll-reveals)
+animate.
+
 Positioning works like CSS too: `position: 'static'` (flow, the default),
 `'relative'` (nudge from the flow slot via `offset: { left, top, right,
 bottom }`; siblings keep the original space), `'absolute'` (out of flow, pinned
@@ -376,6 +415,43 @@ title.update({ color: '#ffffff' })   // restyle live
 `size`, `weight`, `italic`, `color`, `lineHeight`, `letterSpacing`, `align`,
 `vAlign`, `padding`, `maxWidth` (wraps), `background`, `shadow`, `stroke`. Text is
 re-rasterised only when it changes, and it's DPR-aware for crisp glyphs.
+
+## Drawing
+
+Canvas 2D is already a complete drawing API, and any canvas is already a source
+— so Tulle doesn't invent shapes. What it adds is the lifecycle: `tulle.draw()`
+makes a surface your callback repaints **once per rendered frame**, driven by
+the render loop (never its own clock), so it animates live and renders
+identically under a deterministic export:
+
+```js
+const scene = tulle.draw((ctx, { time, width, height }) => {
+  ctx.clearRect(0, 0, width, height)
+  ctx.beginPath()
+  ctx.arc(width / 2, height / 2, 80 + Math.sin(time * 2) * 30, 0, 7)
+  ctx.fill()
+})
+
+tulle.layout(block([scene, title]))
+```
+
+The callback gets the 2D context and the frame context (plus the surface's
+`width`/`height`). `scene.set(fn)` swaps the painter live; `new Draw(fn, {
+width, height })` is the standalone form.
+
+For the everyday backdrop there's `gradient()` — a linear-gradient canvas that
+**dithers itself**, because plain canvas gradients band visibly on dark scenes
+at 8 bits per channel:
+
+```js
+const sky = tulle.gradient([[0, '#0b1026'], [1, '#05060f']], { angle: 115 })
+box(sky, { fit: 'cover' })
+
+tulle.gradient(['#ff5470', '#8367c7', '#4cc9f0'])   // bare colors spread evenly
+```
+
+`angle` is in degrees — 0 sweeps left→right, 90 (the default) top→bottom. The
+standalone form takes explicit `{ width, height }`.
 
 ## Transparency
 

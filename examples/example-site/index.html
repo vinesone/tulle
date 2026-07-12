@@ -33,7 +33,7 @@
   <div class="loading" id="loading">LOADING</div>
 
 <script type="module">
-  import { Tulle, box, block, wave, keyframes, easings, BlastField } from '../../src/ready.js'
+  import { Tulle, box, block, gradient, wave, keyframes, easings, BlastField } from '../../src/ready.js'
 
   const canvas = document.getElementById('stage')
   const tulle  = new Tulle(canvas, { autoDestroy: false })
@@ -56,14 +56,7 @@
     x.fillStyle = x.createPattern(NOISE, 'repeat'); x.fillRect(0, 0, w, h); x.restore()
   }
 
-  function gradient(stops, w, h, angle = 90) {
-    const c = document.createElement('canvas'); c.width = w; c.height = h
-    const x = c.getContext('2d')
-    const a = angle * Math.PI / 180, dx = Math.cos(a) * w / 2, dy = Math.sin(a) * h / 2
-    const g = x.createLinearGradient(w / 2 - dx, h / 2 - dy, w / 2 + dx, h / 2 + dy)
-    for (const [o, col] of stops) g.addColorStop(o, col)
-    x.fillStyle = g; x.fillRect(0, 0, w, h); dither(x, w, h); return c
-  }
+  // Gradients come from the library now — gradient() dithers itself.
   function beams(w, h, cols) {
     const c = document.createElement('canvas'); c.width = w; c.height = h
     const x = c.getContext('2d'); x.fillStyle = '#05060f'; x.fillRect(0, 0, w, h)
@@ -75,13 +68,11 @@
     dither(x, w, h); return c
   }
 
-  // ── A LIVE generated "video" feed (animated canvas, dithered each frame). It's the
-  // fallback / ambient source; a real tulle.clip(...) takes over when you load one. ──
-  const feed = document.createElement('canvas'); feed.width = 640; feed.height = 360
-  const fx = feed.getContext('2d')
+  // ── A LIVE generated "video" feed: a tulle.draw() source, repainted by the render
+  // loop only while it's composited. It's the fallback / ambient source; a real
+  // tulle.clip(...) takes over when you load one. ──
   const BLOBS = [['#ff5470', 0.1], ['#4cc9f0', 0.4], ['#ffd166', 0.7], ['#06d6a0', 0.95], ['#8367c7', 1.3]]
-  function drawFeed(t) {
-    const w = feed.width, h = feed.height
+  const feed = tulle.draw((fx, { time: t, width: w, height: h }) => {
     fx.globalCompositeOperation = 'source-over'; fx.fillStyle = '#0a0a16'; fx.fillRect(0, 0, w, h)
     fx.globalCompositeOperation = 'lighter'
     BLOBS.forEach(([col, ph], i) => {
@@ -93,7 +84,7 @@
       fx.fillStyle = g; fx.beginPath(); fx.arc(cx, cy, r, 0, 7); fx.fill()
     })
     dither(fx, w, h) // kill the radial-gradient rings
-  }
+  }, { width: 640, height: 360 })
 
   // ── The real video (Clip). Its lifecycle drives the swap: the generated feed
   // holds the frame until 'ready', then the footage takes over seamlessly. ──────
@@ -210,7 +201,7 @@
       { w: 'DISSOLVE', c: '#ffd166', fx: [{ name: 'pixelate', params: { size: ctx => 1 + 26 * (0.5 + 0.5 * Math.sin(ctx.time * 1.6)) } }] },
     ]
     const kinetic = section(kH, [
-      overlay(gradient([[0, '#241448'], [1, '#05060f']], W, kH, 90), kH, { fit: 'cover', opacity: ctx => 0.4 + 0.6 * easings.outCubic(r3(ctx)) }),
+      overlay(gradient([[0, '#241448'], [1, '#05060f']], { width: W, height: kH }), kH, { fit: 'cover', opacity: ctx => 0.4 + 0.6 * easings.outCubic(r3(ctx)) }),
       ...KW.map((k, i) => box(
         T(k.w, rowH, { size: Math.min(W * 0.13, U * 0.24), align: 'center', color: k.c, shadow: { color: 'rgba(0,0,0,.5)', blur: 22 } }),
         { position: 'absolute', width: W, height: rowH,
@@ -223,7 +214,7 @@
     // ── COMPOSE ──
     const t4 = at(secH); const r4 = reveal(t4), a4 = ctx => 1 - easings.outCubic(r4(ctx))
     const compose = section(secH, [
-      overlay(gradient([[0, '#8367c7'], [0.5, '#4361ee'], [1, '#06d6a0']], W, secH, 120), secH, { fit: 'cover', opacity: ctx => 0.3 + 0.7 * easings.outCubic(r4(ctx)) }),
+      overlay(gradient([[0, '#8367c7'], [0.5, '#4361ee'], [1, '#06d6a0']], { width: W, height: secH, angle: 120 }), secH, { fit: 'cover', opacity: ctx => 0.3 + 0.7 * easings.outCubic(r4(ctx)) }),
       overlay(T('COMPOSE\nANIMATE\nSCROLL', secH, { size: Math.min(W * 0.1, U * 0.2), lineHeight: 0.98, color: '#0b0b12', shadow: glow(0.6) }), secH, {
         opacity: ctx => 0.15 + 0.85 * easings.outCubic(r4(ctx)),
         effects: [{ name: 'shatter', params: { progress: a4, cells: 24, blast: 1.3, drip: 0.45 } }] }),
@@ -233,7 +224,7 @@
     // ── OUTRO ──
     const t5 = at(outroH); const r5 = reveal(t5), a5 = ctx => 1 - easings.outCubic(r5(ctx))
     const outro = section(outroH, [
-      overlay(gradient([[0, '#05060f'], [1, '#241448']], W, outroH, 90), outroH, { fit: 'cover' }),
+      overlay(gradient([[0, '#05060f'], [1, '#241448']], { width: W, height: outroH }), outroH, { fit: 'cover' }),
       overlay(T('WELCOME\nTO 2026', outroH, { size: Math.min(W * 0.13, U * 0.26), lineHeight: 0.92, shadow: { color: 'rgba(0,0,0,.5)', blur: 24 } }), outroH, {
         opacity: ctx => easings.outCubic(r5(ctx)),
         effects: [
@@ -256,7 +247,7 @@
     const cue   = T('scroll ↓', 40, { size: 16, weight: 600, color: 'rgba(255,255,255,.8)' })
     const barPx = document.createElement('canvas'); barPx.width = barPx.height = 8
     barPx.getContext('2d').fillStyle = '#ff5470'; barPx.getContext('2d').fillRect(0, 0, 8, 8)
-    const sky = gradient([[0, '#0b1026'], [0.5, '#1b1140'], [1, '#05060f']], W, Math.round(H * 1.3), 115)
+    const sky = gradient([[0, '#0b1026'], [0.5, '#1b1140'], [1, '#05060f']], { width: W, height: Math.round(H * 1.3), angle: 115 })
 
     tulle.layout(
       block([
@@ -302,8 +293,7 @@
   canvas.addEventListener('wheel', cancelGlide, { passive: true })
   canvas.addEventListener('touchstart', cancelGlide, { passive: true })
 
-  tulle.on('frame', ({ time, scrollY }) => {
-    drawFeed(time)
+  tulle.on('frame', ({ scrollY }) => {
     if (glideTarget != null) {
       const d = glideTarget - tulle.scrollY
       if (Math.abs(d) < 1.5) { tulle.scrollTo(0, glideTarget); glideTarget = null }

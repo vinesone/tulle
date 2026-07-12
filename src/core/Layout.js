@@ -104,6 +104,10 @@ function walk(node, out) {
       blend:   o.blend ?? 'over',
       opacity: o.opacity ?? 1,
       fit:     o.fit ?? 'contain',
+      // Paint-time transforms about the box centre, CSS-transform-like: they never
+      // affect flow. Either may be a function of the frame context.
+      rotate:  o.rotate ?? 0,
+      scale:   o.scale ?? 1,
       // A fixed box is pinned to the viewport and does NOT move when the layout
       // scrolls — the compositor skips the scroll offset for it.
       fixed:   o.position === 'fixed',
@@ -383,14 +387,33 @@ export const HIDDEN = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 1])
 /**
  * Map the fullscreen quad onto a design-space rect, in clip space. Design space is
  * top-left origin, y-down; clip space is centre origin, y-up — hence the y flip.
+ *
+ * `rotate` (radians, counter-clockwise, like Transform.rotate) and `scale` (a
+ * number, or [sx, sy]) apply about the rect's centre, after layout — CSS-transform
+ * semantics: the box keeps its flow slot, only the paint moves. Rotation is
+ * composed in pixel space, where units are isotropic, so a rotated box keeps its
+ * shape on a non-square frame.
+ *
  * @param {{x,y,w,h}} rect @param {{width,height}} frame
+ * @param {number} [rotate] @param {number|[number, number]} [scale]
  * @returns {Float32Array} column-major mat3
  */
-export function rectToMatrix(rect, frame) {
+export function rectToMatrix(rect, frame, rotate = 0, scale = 1) {
   const { width: W, height: H } = frame
-  const cx = (rect.x + rect.w / 2) / W * 2 - 1
-  const cy = 1 - (rect.y + rect.h / 2) / H * 2
-  return Transform.identity().translate(cx, cy).scale(rect.w / W, rect.h / H).matrix()
+  if (!rotate && scale === 1) {
+    const cx = (rect.x + rect.w / 2) / W * 2 - 1
+    const cy = 1 - (rect.y + rect.h / 2) / H * 2
+    return Transform.identity().translate(cx, cy).scale(rect.w / W, rect.h / H).matrix()
+  }
+  const [sx, sy] = Array.isArray(scale) ? scale : [scale, scale]
+  const cx = rect.x + rect.w / 2 - W / 2
+  const cy = H / 2 - (rect.y + rect.h / 2)
+  return Transform.identity()
+    .scale(2 / W, 2 / H)           // pixels → clip space
+    .translate(cx, cy)             // centre the box (y-up pixels, frame-centre origin)
+    .rotate(rotate)
+    .scale(sx * rect.w / 2, sy * rect.h / 2) // quad (±1) → scaled box, in pixels
+    .matrix()
 }
 
 /**
