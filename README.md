@@ -1,7 +1,8 @@
 # Tulle
 
-Web Library (GL) - UI Api for the modern web, without the need to write shaders.
-All while being open for extension. 
+A WebGL2 effects and compositing library — a modern API for shader effects over
+video, canvas, and images, with no shaders to write. Open for extension with
+your own.
 
 **[Live examples →](https://vinesone.github.io/tulle/)**
 
