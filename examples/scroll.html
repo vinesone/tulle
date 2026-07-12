@@ -18,28 +18,28 @@
     <a href="layout.html">layout</a>
     <a href="scroll.html" aria-current="page">scroll</a>
     <a href="export.html">export</a>
+    <a href="https://github.com/vinesone/tulle">github ↗</a>
   </nav>
 
   <p class="note">
     A scrolling composition — the experience, not a document. Content taller than the
     frame pans with the <strong>mouse wheel</strong>; the header stays
-    <code>fixed</code>. Each section <strong>reveals as you scroll to it</strong> —
-    it slides up, fades in, and sharpens out of a blur — because its opacity, offset,
-    and its <code>blur</code> effect's radius are all <strong>functions of
-    <code>scrollY</code></strong>. Same value-of-time machinery, pointed at scroll.
-    Scroll over the canvas.
+    <code>fixed</code>. Each section is <strong>decimated when it enters</strong> —
+    shattered, blurred, and split by chromatic aberration — then resolves to clean as
+    it rises, because every effect's param is a <strong>function of
+    <code>scrollY</code></strong>. Scroll over the canvas.
   </p>
 
-  <canvas id="canvas" width="760" height="460"></canvas>
+  <canvas id="canvas" width="760" height="820"></canvas>
 
   <div class="status" id="status">scroll ↕ over the canvas</div>
 
 <script src="js/guard.js"></script>
 
 <script type="module">
-  import { Tulle, box, block, keyframes } from '../src/ready.js'
+  import { Tulle, box, block, keyframes, easings } from '../src/ready.js'
 
-  const W = 760, H = 460
+  const W = 760, H = 820
   const $ = id => document.getElementById(id)
   const tulle = new Tulle($('canvas'))
 
@@ -51,7 +51,7 @@
     { c: '#118ab2', t: 'SCROLL' },
     { c: '#8367c7', t: 'SHIP' },
   ]
-  const SECTION_H = 300
+  const SECTION_H = 300 // cards stay this height; the tall viewport shows several at once
 
   function panel(color, label, i) {
     const c = document.createElement('canvas'); c.width = W; c.height = SECTION_H
@@ -65,26 +65,37 @@
     return c
   }
 
-  // A section's reveal progress 0..1, purely from scroll: 0 while it's below the
-  // fold, 1 once its top reaches the upper third. Everything about the section is a
-  // function of this — the compositor re-solves and re-renders it every frame.
+  // A section's reveal progress 0..1, from scroll. 0 while its top is low on screen
+  // (just entered from the bottom), 1 once it has risen into the reading zone — a
+  // wide window so the transition plays out across the visible viewport, not in a
+  // sliver at the edge. Everything about the section is a function of this.
   const reveal = i => {
     const top = i * SECTION_H
     return ctx => {
-      const screenTop = top - ctx.scrollY
-      const p = (H - screenTop) / (H - H * 0.35)
+      const screen = top - ctx.scrollY      // section top in screen px (0 = viewport top)
+      // Assemble across the ENTIRE rise: shattered when the top is at the bottom of
+      // the viewport, whole only once it reaches the top. So the effect plays out
+      // full-screen while you scroll, instead of finishing at the bottom edge.
+      const p = (H - screen) / (H * 0.9)
       return Math.max(0, Math.min(1, p))
     }
   }
 
   const sections = SECTIONS.map((s, i) => {
     const r = reveal(i)
+    const e = ctx => easings.outCubic(r(ctx))
+    const away = ctx => 1 - e(ctx)            // 1 while entering, 0 once landed
     return box(panel(s.c, s.t, i), {
       width: W, height: SECTION_H,
       position: 'relative',
-      offset:  { top: ctx => (1 - r(ctx)) * 64 },      // slides up into place
-      opacity: ctx => 0.08 + 0.92 * r(ctx),            // fades in
-      effects: [{ name: 'blur', params: { radius: ctx => (1 - r(ctx)) * 9 } }], // sharpens
+      opacity: ctx => 0.22 + 0.78 * e(ctx),         // stay visible while it's wrecked
+      // Wrecked → clean as it lands: a violent shatter, smeared with blur and split
+      // by chromatic aberration, all driven by the same scroll `progress`.
+      effects: [
+        { name: 'shatter',              params: { progress: ctx => away(ctx), cells: 30, blast: 1.6, drip: 0.55 } },
+        { name: 'blur',                 params: { radius: ctx => away(ctx) * 46 } },
+        { name: 'chromatic-aberration', params: { spread: ctx => away(ctx) * 0.32 } },
+      ],
     })
   })
 
@@ -102,12 +113,16 @@
   const dot = document.createElement('canvas'); dot.width = dot.height = 16
   { const x = dot.getContext('2d'); x.beginPath(); x.arc(8, 8, 8, 0, 7); x.fillStyle = '#ff5470'; x.fill() }
 
-  const MAX = SECTIONS.length * SECTION_H - H // total scrollable distance
+  // Trailing space so the last sections can scroll all the way up and fully resolve
+  // (the viewport is tall, so without this the final cards stay shattered at the end).
+  const spacer = document.createElement('canvas'); spacer.width = spacer.height = 8 // transparent
+  const SPACER = H - SECTION_H
+  const MAX = SECTIONS.length * SECTION_H + SPACER - H // total scrollable distance
 
   tulle.layout(
     block([
       box(backdrop, { position: 'fixed', fit: 'fill', offset: { top: 0, left: 0 }, width: W, height: H }),
-      block(sections),                       // the tall, scrolling, self-revealing content
+      block([...sections, box(spacer, { width: W, height: SPACER })]), // scrolling content + tail
       box(bar,    { position: 'fixed', offset: { top: 0, left: 0 }, width: W, height: 56 }),
       box(header, { position: 'fixed', offset: { top: 0, left: 0 }, width: W, height: 56 }),
       box(strip, {                           // progress strip: width tracks scroll
