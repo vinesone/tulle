@@ -7,6 +7,8 @@ import { toMatrix } from './Transform.js'
 import { Text }     from './Text.js'
 import { Clip }     from './Clip.js'
 import { Draw, gradient } from './Draw.js'
+import { Splat }    from './Splat.js'
+import { HeadTracker } from './Head.js'
 import { coerceRoot, flattenLeaves, solveLayout, rectToMatrix, fitRect, coverUV, intrinsicSize, aspectOf, HIDDEN } from './Layout.js'
 import { record as recordVideo, walkFrames } from './Recorder.js'
 
@@ -498,6 +500,45 @@ export class Tulle {
       height: this.#canvas.height,
       ...options,
     }))
+  }
+
+  /**
+   * Create a 3D Gaussian Splatting source sized to this canvas, owned by this
+   * Tulle (destroyed with it). Loads a `.ply` or `.splat` file — or takes the
+   * bytes, or SplatData — and renders it each frame through a window camera.
+   *
+   *   const scene = tulle.splat('garden.ply')
+   *   scene.track(await tulle.head().start())   // look around with your head
+   *   tulle.composite([{ source: scene }]).play()
+   *
+   * Use `new Splat(...)` directly if you want to own its teardown yourself.
+   *
+   * @param {string | ArrayBuffer | Blob | object} src
+   * @param {object} [options] — see Splat.
+   * @returns {Splat}
+   */
+  splat(src, options = {}) {
+    return this.#scope.own(new Splat(src, {
+      width:  this.#canvas.width,
+      height: this.#canvas.height,
+      ...options,
+    }))
+  }
+
+  /**
+   * Create a head tracker, owned by this Tulle (its camera is released with it).
+   * Webcam by default, falling back to this canvas' pointer if the camera can't
+   * start. Call `start()` to begin — that is when the camera prompt appears.
+   *
+   *   const head = tulle.head()
+   *   await head.start()
+   *   scene.track(head)
+   *
+   * @param {object} [options] — see HeadTracker.
+   * @returns {HeadTracker}
+   */
+  head(options = {}) {
+    return this.#scope.own(new HeadTracker({ pointer: this.#pointer, ...options }))
   }
 
   /**

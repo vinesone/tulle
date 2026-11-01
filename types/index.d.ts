@@ -309,6 +309,282 @@ export function gradient(
   options: { width: number; height: number; angle?: number; dither?: boolean },
 ): HTMLCanvasElement
 
+// ── Gaussian splats ─────────────────────────────────────────────────────────
+
+export type Vec3 = [number, number, number]
+
+/** Decoded splats: plain typed arrays, one entry per splat. */
+export interface SplatData {
+  count: number
+  /** 3 per splat — x y z. */
+  positions: Float32Array
+  /** 3 per splat — linear std-dev along each local axis. */
+  scales: Float32Array
+  /** 4 per splat — unit quaternion, w x y z. */
+  rotations: Float32Array
+  /** 4 per splat — r g b a, 0..255, straight alpha. */
+  colors: Uint8Array
+}
+
+/** SplatData you build yourself: anything but `positions` may be omitted. */
+export interface SplatDataInput {
+  count?: number
+  positions: Float32Array | number[]
+  scales?: Float32Array | number[]
+  rotations?: Float32Array | number[]
+  colors?: Uint8Array | number[]
+}
+
+/** A window camera: the rectangle it sees on the plane through `target` stays pinned to the screen. */
+export interface SplatCamera {
+  position: Vec3
+  target: Vec3
+  /** Default [0, 1, 0]; auto-framed captures use [0, -1, 0] (COLMAP y-down). */
+  up?: Vec3
+  /** Vertical field of view, degrees. Default 50. */
+  fov?: number
+  near?: number
+  far?: number
+}
+
+/** Eye offset from neutral in screen half-heights: x right, y up, z away from the screen. */
+export interface HeadOffset { x: number; y: number; z: number }
+
+/** Anything a Splat can track — a HeadTracker, or your own `{ offset }`. */
+export interface HeadLike { readonly offset: HeadOffset }
+
+export interface SplatBounds { min: number[]; max: number[]; center: number[]; radius: number }
+
+export interface SplatOptions {
+  /** Surface size in px. `tulle.splat()` fills these from the canvas. */
+  width?: number
+  height?: number
+  /** A camera, or a function of the frame returning one. Omit to frame the scene on load. */
+  camera?: SplatCamera | ((frame: Partial<FrameContext>) => SplatCamera)
+  head?: HeadLike
+  /** How strongly the head moves the eye. Default 1; 0 freezes the view. */
+  parallax?: number
+  /** `[r, g, b, a]` 0..1, or null (default) for transparent. */
+  background?: [number, number, number, number] | null
+  /** Back-to-front sort on a worker (default) or this thread. */
+  sort?: 'worker' | 'sync'
+  /** Std-dev for splats with no scale (point clouds). Default 0.01. */
+  pointSize?: number
+  /** Passed to fetch() when `src` is a URL. */
+  fetch?: RequestInit
+}
+
+export interface SplatEvents {
+  load: void
+  progress: { loaded: number; total: number }
+  ready: { count: number; bounds: SplatBounds }
+  error: unknown
+  unload: void
+}
+
+export type SplatSource = string | ArrayBuffer | ArrayBufferView | Blob | SplatDataInput
+
+/**
+ * A 3D Gaussian Splatting scene as a source: loads `.ply` / `.splat`, renders
+ * through a window camera, optionally coupled to a head tracker.
+ * `new Splat(...)` is caller-owned; `tulle.splat(...)` is owned by the Tulle.
+ */
+export class Splat extends Emitter implements TexSource {
+  constructor(src: SplatSource | null, options: SplatOptions & { width: number; height: number })
+  readonly texSource: HTMLCanvasElement
+  readonly canvas: HTMLCanvasElement
+  readonly width: number
+  readonly height: number
+  /** Splats loaded; 0 before 'ready'. */
+  readonly count: number
+  readonly bounds: SplatBounds | null
+  readonly ready: boolean
+  readonly head: HeadLike | null
+  camera: SplatOptions['camera'] | null
+  parallax: number
+  on<K extends keyof SplatEvents>(type: K, handler: (payload: SplatEvents[K]) => void): () => void
+  on(type: string, handler: (payload?: any) => void): () => void
+  /** Couple the view to a head tracker; null detaches. */
+  track(head: HeadLike | null): this
+  /** Merge into the current camera. */
+  look(camera: Partial<SplatCamera>): this
+  /** Frame the scene's bounds from `distance` radii back along +z, y-down. */
+  fit(options?: { distance?: number; fov?: number }): this
+  resize(width: number, height: number): this
+  /** Replace the scene; resolves once it is on the GPU. */
+  load(src: SplatSource): Promise<this>
+  whenReady(): Promise<this>
+  /** Export hook: waits for the scene and sorts the next frame synchronously. */
+  seekTo(time: number): Promise<this>
+  advance(frame?: FrameContext): void
+  destroy(): void
+}
+
+export function parseSplatFile(buffer: ArrayBuffer, options?: { pointSize?: number }): SplatData
+export function parseSplat(buffer: ArrayBuffer): SplatData
+export function parsePly(buffer: ArrayBuffer, options?: { pointSize?: number }): SplatData
+export function toSplatData(input: SplatDataInput, options?: { pointSize?: number }): SplatData
+/** Write SplatData as a `.splat` file (the inverse of parseSplat). */
+export function encodeSplat(data: SplatData): ArrayBuffer
+export function packSplats(data: SplatData): { data: Uint32Array; width: number; height: number }
+/** Splat indices back to front for a view matrix. */
+export function sortSplats(positions: Float32Array, count: number, view: ArrayLike<number>, out?: Uint32Array): Uint32Array
+export function boundsOf(positions: Float32Array, count: number): SplatBounds
+
+// ── Image → splats ───────────────────────────────────────────────────────────
+
+/** Relative depth for an image: disparity, larger = nearer. Any scale; it is normalised. */
+export interface DepthMap { data: ArrayLike<number>; width: number; height: number }
+
+export const DEPTH_DEFAULTS: {
+  /** transformers.js ESM build to import. */
+  module: string
+  /** Hugging Face model id (a depth-estimation model). */
+  model: string
+  device: string
+  dtype: string
+  /** Assigned onto transformers.js `env` (e.g. remoteHost, allowRemoteModels); `wasmPaths`/`numThreads` go to ONNX Runtime. */
+  env: Record<string, unknown> | null
+}
+
+export interface ImageSplatOptions {
+  /** 'model' (default) estimates depth; 'flat' makes a card; or supply a map / a function returning one. */
+  depth?: 'model' | 'flat' | DepthMap | ((canvas: HTMLCanvasElement) => DepthMap | Promise<DepthMap>)
+  /** Longest side of the sampled grid, px — one splat per pixel. Default 640. */
+  maxSize?: number
+  /** Vertical field of view the photo is assumed to have, degrees. Default 50. */
+  fov?: number
+  /** Farthest depth relative to the nearest (1). Larger = deeper. Default 3. */
+  far?: number
+  /** Coarse plate behind foreground edges, so leaning reveals background, not holes. Default true. */
+  backfill?: boolean
+  /** How far the plate reaches under foreground, as a fraction of the long side. Default 0.08. */
+  reach?: number
+  /** How much tighter the returned camera frames than the photo. Default 0.08. */
+  overscan?: number
+  model?: Partial<typeof DEPTH_DEFAULTS>
+  onProgress?: (p: { stage: 'model' | 'depth' | 'build'; loaded?: number; total?: number; file?: string }) => void
+}
+
+/**
+ * Turn a photo into splats: estimate depth (in a worker), lift each pixel onto
+ * its ray. `camera` reproduces the photo's framing with the median depth on the glass.
+ */
+export function imageToSplat(
+  image: HTMLImageElement | HTMLCanvasElement | ImageBitmap | Blob | string,
+  options?: ImageSplatOptions,
+): Promise<{ data: SplatData; camera: SplatCamera; width: number; height: number }>
+
+/** Depth Anything V2 (via transformers.js, from a CDN) on a canvas. */
+export function estimateDepth(
+  canvas: HTMLCanvasElement,
+  options?: { model?: Partial<typeof DEPTH_DEFAULTS>; onProgress?: ImageSplatOptions['onProgress'] },
+): Promise<DepthMap>
+
+/** The pure core: RGBA pixels + 0..1 disparity in, splats and a matching camera out. */
+export function splatFromDepth(
+  input: { pixels: ArrayLike<number>; disparity: ArrayLike<number>; width: number; height: number },
+  options?: Pick<ImageSplatOptions, 'fov' | 'far' | 'backfill' | 'reach' | 'overscan'>,
+): { data: SplatData; camera: SplatCamera }
+
+/** Snap depth-edge ramps to their near or far side, so edges don't leave pixels floating. */
+export function snapEdges(z: Float32Array, width: number, height: number, footprint: number, radius?: number): Float32Array
+
+/** Resample a depth map to width×height (bilinear) and stretch it to 0..1. */
+export function normalizeDepth(map: DepthMap, width: number, height: number): Float32Array
+
+// ── Head tracking ────────────────────────────────────────────────────────────
+
+/** An eye position in mm from the camera: x the viewer's right, y up, z distance. */
+export interface HeadPose { x: number; y: number; z: number }
+
+export interface HeadTrackerOptions {
+  source?: 'webcam' | 'pointer' | 'manual'
+  /** For the pointer source and fallback; `tulle.head()` passes the Tulle's own. */
+  pointer?: PointerState | null
+  /** When the webcam can't start: switch to the pointer (default) or reject (null). */
+  fallback?: 'pointer' | null
+  /** Physical screen height in mm — the unit offsets are measured in. Default 190. */
+  screenHeight?: number
+  /** Webcam horizontal field of view, degrees. Default 60. */
+  cameraFov?: number
+  /** Interpupillary distance, mm. Default 63. */
+  ipd?: number
+  /** One Euro filter params. Defaults { minCutoff: 1, beta: 0.01 }. */
+  smoothing?: { minCutoff?: number; beta?: number }
+  /** Seconds without a face before 'lost'. Default 0.5. */
+  lostAfter?: number
+  /** A ready MediaPipe FaceLandmarker in VIDEO mode. */
+  landmarker?: unknown
+  /** A custom detector replacing MediaPipe: return a pose in mm, or null for no face. */
+  detect?: (video: HTMLVideoElement, timeMs: number) => HeadPose | null
+  /** Override where MediaPipe is loaded from. */
+  vision?: Partial<typeof VISION_DEFAULTS>
+}
+
+export interface HeadTrackerEvents {
+  start: { source: 'webcam' | 'pointer' | 'manual' }
+  stop: void
+  pose: { pose: HeadPose; offset: HeadOffset }
+  found: void
+  lost: void
+  /** The webcam couldn't start; the pointer took over. */
+  fallback: unknown
+  error: unknown
+  destroy: void
+}
+
+export const VISION_DEFAULTS: { module: string; wasm: string; model: string }
+
+/** Where the viewer's eyes are relative to the screen — webcam, pointer, or fed by hand. */
+export class HeadTracker extends Emitter implements HeadLike {
+  constructor(options?: HeadTrackerOptions)
+  readonly source: 'webcam' | 'pointer' | 'manual'
+  readonly running: boolean
+  readonly tracking: boolean
+  /** The webcam stream's <video>, for a preview. */
+  readonly video: HTMLVideoElement | null
+  /** Smoothed eye position in mm from the camera. */
+  readonly pose: HeadPose | null
+  readonly neutral: HeadPose | null
+  readonly offset: HeadOffset
+  on<K extends keyof HeadTrackerEvents>(type: K, handler: (payload: HeadTrackerEvents[K]) => void): () => void
+  on(type: string, handler: (payload?: any) => void): () => void
+  /** Begin tracking. For the webcam this prompts for camera access. */
+  start(): Promise<this>
+  stop(): this
+  /** Make the current head position the neutral one. */
+  recenter(): this
+  /** Feed a raw pose (mm from the camera). The input path for the 'manual' source. */
+  update(pose: HeadPose, timeMs?: number): this
+  destroy(): void
+}
+
+/** The One Euro low-pass filter: smooth at rest, responsive in motion. */
+export class OneEuro {
+  constructor(options?: { minCutoff?: number; beta?: number; dCutoff?: number })
+  filter(value: number, timeSeconds: number): number
+  reset(): this
+}
+
+/** Eye midpoint in mm from normalised MediaPipe FaceMesh landmarks. */
+export function poseFromLandmarks(
+  landmarks: Array<{ x: number; y: number; z?: number }>,
+  camera: { width: number; height: number; fov?: number; ipd?: number },
+): HeadPose
+
+// ── Camera math ──────────────────────────────────────────────────────────────
+
+/** The off-axis window camera: `offset` moves the eye, the window stays pinned to the screen. */
+export function windowCamera(
+  camera: SplatCamera & { aspect?: number },
+  offset?: Partial<HeadOffset> | null,
+  parallax?: number,
+): { view: Float32Array; proj: Float32Array; eye: Vec3 }
+export function lookAt(position: Vec3, target: Vec3, up?: Vec3): Float32Array
+export function perspective(fov: number, aspect: number, near: number, far: number): Float32Array
+export function frustum(l: number, r: number, b: number, t: number, n: number, f: number): Float32Array
+
 // ── Layout ─────────────────────────────────────────────────────────────────
 
 /** How a box fills its solved rect: `contain` letterboxes, `cover` centre-crops via UV, `fill` stretches. */
@@ -652,6 +928,10 @@ export class Tulle {
   clip(src: string | HTMLVideoElement, options?: ClipOptions): Clip
   /** A Draw source sized to this canvas, owned by this Tulle — repainted by `fn` once per rendered frame. */
   draw(fn: Painter, options?: { width?: number; height?: number }): Draw
+  /** A 3D Gaussian Splatting source sized to this canvas, owned by this Tulle. */
+  splat(src: SplatSource, options?: SplatOptions): Splat
+  /** A head tracker (webcam, falling back to this canvas' pointer), owned by this Tulle. Call start(). */
+  head(options?: HeadTrackerOptions): HeadTracker
   /** A dithered linear-gradient canvas sized to this canvas. */
   gradient(stops: GradientStop[], options?: { width?: number; height?: number; angle?: number; dither?: boolean }): HTMLCanvasElement
   /** Arrange sources with a flow layout (inline/block, relative/absolute/fixed). Re-solved each frame. */

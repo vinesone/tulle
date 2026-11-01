@@ -41,7 +41,7 @@
     "dev": "node scripts/serve.mjs",
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node test/pool.test.mjs && node test/composite.test.mjs && node test/transform.test.mjs && node test/effect.test.mjs && node test/text.test.mjs && node test/clip.test.mjs && node test/layout.test.mjs && node test/animate.test.mjs && node test/export.test.mjs && node test/cube.test.mjs",
+    "test": "node test/pool.test.mjs && node test/composite.test.mjs && node test/transform.test.mjs && node test/effect.test.mjs && node test/text.test.mjs && node test/clip.test.mjs && node test/layout.test.mjs && node test/animate.test.mjs && node test/export.test.mjs && node test/cube.test.mjs && node test/splat.test.mjs && node test/head.test.mjs && node test/imagesplat.test.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
@@ -58,7 +58,10 @@
     "lut",
     "color-grading",
     "layout",
-    "animation"
+    "animation",
+    "gaussian-splatting",
+    "3dgs",
+    "head-tracking"
   ],
   "engines": {
     "node": ">=22"

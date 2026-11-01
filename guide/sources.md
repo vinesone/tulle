@@ -113,3 +113,108 @@ tulle.gradient(['#ff5470', '#8367c7', '#4cc9f0'])   // bare colors spread evenly
 
 `angle` is in degrees — 0 sweeps left→right, 90 (the default) top→bottom. The
 standalone form takes explicit `{ width, height }`.
+
+## Gaussian splats
+
+`tulle.splat()` renders a **3D Gaussian Splatting** scene — a `.ply` from 3DGS
+training (INRIA's reference code, Postshot, Polycam, Luma, …) or a compact
+`.splat` — as a source. Like everything else on this page it is just a source:
+it blends, takes effects and post chains, and sits in a layout box.
+
+```js
+const scene = tulle.splat('garden.ply')
+scene.on('progress', ({ loaded, total }) => bar(loaded / total))
+scene.on('ready', ({ count, bounds }) => console.log(count, 'splats'))
+
+tulle.composite([{ source: scene }]).post(['grade', 'grain']).play()
+```
+
+`src` is a URL, the file's bytes (`ArrayBuffer`, a `File` from an
+`<input type=file>`), or **SplatData** you build yourself — typed arrays of
+`positions` (plus optional `colors`, `scales`, `rotations`), so you can generate
+a scene in code. `scene.load(src)` swaps scenes in place.
+
+**The camera** is `{ position, target, up, fov }` — or a function of the frame
+returning one, for a move that renders identically under export. Omit it and
+`fit()` frames the scene from its bounds when it loads. Captured scenes come out
+of COLMAP **y-down**, so `fit()` uses `up: [0, -1, 0]`; a viewpoint close to the
+capture's own cameras always looks best, since splats are only trained to look
+right from where they were photographed. `scene.look({ position })` nudges the
+current camera.
+
+### From a photo
+
+A single image becomes a splat scene with `imageToSplat()`: depth is estimated
+in the browser (Depth Anything V2 via transformers.js, fetched from a CDN the
+first time — a one-off 27 MB, then cached — and run in a Web Worker so the page
+keeps rendering), and each pixel is lifted onto its camera ray as a gaussian.
+
+```js
+const { data, camera } = await imageToSplat(file, {
+  onProgress: ({ stage, loaded, total }) => …,   // 'model' download, 'depth', 'build'
+})
+scene.camera = camera      // the photo's own framing, median depth on the glass
+await scene.load(data)
+scene.track(head)          // and now lean around it
+
+const bytes = encodeSplat(data)   // a .splat file, loadable by other viewers too
+```
+
+It's a 2.5D "3D photo": convincing for the kind of movement a head makes, with
+what the camera never saw filled in by a coarse background plate rather than
+left as holes. `far` (default 3) sets how deep the scene feels; `fov` (default
+50) is the field of view the photo is assumed to have; `maxSize` (default 640)
+the resolution, one splat per pixel. Bring your own depth — a phone's depth map,
+another model — with `depth: { data, width, height }` (disparity, larger =
+nearer), or skip it with `depth: 'flat'`. To self-host the model, set
+`model: { env: { remoteHost, … } }` (see `DEPTH_DEFAULTS`).
+
+Only the base colour of each splat is used; view-dependent colour (higher-order
+spherical harmonics) is dropped, which costs a little sheen on shiny surfaces.
+
+## Head tracking
+
+`tulle.head()` tracks where the viewer's eyes are, and a Splat that tracks it
+renders through a **window camera**: the plane through the camera's `target` is
+pinned to the edges of the screen and only your eye moves. Lean right and
+things behind that plane follow you while things in front of it slide the other
+way — the screen reads as a pane of glass with the scene behind it, not a view
+swinging around.
+
+```js
+const head = tulle.head()      // webcam, falling back to the pointer
+await head.start()             // the camera permission prompt appears here
+scene.track(head)
+
+scene.parallax = 1.5           // exaggerate (0 freezes the view)
+head.recenter()                // "where I'm sitting now is straight on"
+```
+
+**Sources.** `'webcam'` (default) finds your eyes with MediaPipe's
+FaceLandmarker, fetched from a CDN the first time you call `start()` — Tulle
+itself has no dependencies, and nothing is downloaded unless you ask for the
+webcam. Distance comes from the spacing of your eyes, so there's no calibration
+step. If the camera is denied or missing it falls back to `'pointer'` and emits
+`fallback`; pass `{ fallback: null }` to get a rejection instead. `'pointer'`
+uses the mouse as your head — handy in development. `'manual'` samples nothing:
+feed it poses with `head.update({ x, y, z })` (mm from the camera) from WebXR, a
+different tracker, or a recorded path.
+
+**Output.** `head.offset` is the eye's offset from neutral in screen
+half-heights (`x` right, `y` up, `z` away from the screen) — exactly what
+`windowCamera()` takes, so anything with an `offset` works with `track()`.
+`head.pose` is the smoothed raw position in mm. Raw samples pass through a One
+Euro filter (`smoothing: { minCutoff, beta }`): steady when you hold still,
+no lag when you move. Neutral is fixed once tracking settles; when the face is
+lost the view eases back to it.
+
+**Tuning.** `screenHeight` (mm, default 190 — a laptop) sets how far a
+"half-screen" of head movement is; `cameraFov` (default 60°) and `ipd`
+(default 63 mm) refine the distance estimate. Events: `start`, `pose`, `found`,
+`lost`, `fallback`, `error`, `stop`. `head.video` is the camera feed, for a
+preview. The webcam needs a secure context — `https://` or `localhost`.
+
+Head tracking is live input, like the pointer: it never drives a
+[deterministic export](rendering.md#deterministic-rendering). A Splat itself is
+export-safe — `record()` sorts each frame exactly — so for a head-coupled move
+in a video, record the poses and replay them through a `'manual'` tracker.

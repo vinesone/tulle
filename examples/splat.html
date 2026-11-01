@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tulle — splat</title>
+  <link rel="stylesheet" href="styles/style.css">
+  <style>
+    .stage { position: relative; width: min(960px, 100%) }
+    .stage canvas { width: 100%; height: auto }
+    #preview {
+      position: absolute; right: 8px; bottom: 8px; width: 160px;
+      border: 1px solid #333; transform: scaleX(-1); display: none;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap }
+    button, .file {
+      background: #141414; border: 1px solid #333; color: #ccc; font: inherit;
+      padding: 4px 10px; cursor: pointer;
+    }
+    button[aria-pressed="true"] { border-color: #7f5af0; color: #fff }
+    .file input { display: none }
+    button:disabled { opacity: 0.4; cursor: default }
+    .stage:fullscreen { width: 100vw; height: 100vh; background: #000 }
+    .stage:fullscreen canvas { width: 100%; height: 100%; border: none }
+    #fullscreen {
+      position: absolute; left: 8px; top: 8px; opacity: 0.6;
+      background: rgba(0, 0, 0, 0.5);
+    }
+    #fullscreen:hover, .stage:not(:fullscreen) #fullscreen { opacity: 1 }
+    .stage:fullscreen #fullscreen { opacity: 0 }
+    .stage:fullscreen:hover #fullscreen { opacity: 0.6 }
+    .stage.dragging::after {
+      content: 'drop an image to make a splat — or a .ply / .splat to open it';
+      position: absolute; inset: 0; display: grid; place-items: center;
+      background: rgba(127, 90, 240, 0.25); border: 2px dashed #7f5af0; color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>TULLE / splat</h1>
+
+  <nav>
+    <a href="index.html">index</a>
+    <a href="playground.html">playground</a>
+    <a href="vhs.html">VHS</a>
+    <a href="explode.html">explode</a>
+    <a href="layout.html">layout</a>
+    <a href="scroll.html">scroll</a>
+    <a href="export.html">export</a>
+    <a href="splat.html" aria-current="page">splat</a>
+    <a href="https://github.com/vinesone/tulle">github ↗</a>
+  </nav>
+
+  <p class="note">
+    A <strong>3D Gaussian Splatting</strong> scene as a Tulle source, viewed through a
+    <strong>window camera</strong> coupled to your head. Turn on the webcam and
+    <strong>move your head</strong>: the screen becomes a pane of glass. Things behind the
+    focus plane follow your head, things in front of it slide the other way. No camera?
+    The pointer stands in for your head. The scene is an ordinary layer, so it still
+    runs through a post chain (<code>vignette → grain</code>).
+    <br><strong>Drop a photo</strong> on the canvas to turn it into a splat: depth is
+    estimated in your browser (Depth Anything V2, a one-time 27 MB download), every
+    pixel is lifted onto its ray, and you can lean around it — then download the
+    <code>.splat</code>.
+  </p>
+
+  <div class="stage">
+    <canvas id="canvas" width="960" height="540"></canvas>
+    <video id="preview" muted playsinline></video>
+    <button id="fullscreen" title="fullscreen (F)">⛶ fullscreen</button>
+  </div>
+
+  <div class="controls">
+    <div class="card">
+      <header>head tracking</header>
+      <div class="row">
+        <button id="webcam">webcam</button>
+        <button id="pointer" aria-pressed="true">pointer</button>
+        <button id="recenter">recenter</button>
+      </div>
+      <label>parallax
+        <input type="range" id="parallax" min="0" max="3" step="0.05" value="1">
+        <output id="parallax-val">1.00</output>
+      </label>
+    </div>
+    <div class="card">
+      <header>scene</header>
+      <div class="row">
+        <button id="procedural" aria-pressed="true">generated</button>
+        <button id="sample">sample capture (33 MB)</button>
+        <label class="file">open .ply / .splat / image…<input type="file" id="file" accept=".ply,.splat,image/*"></label>
+        <button id="download" disabled>download .splat</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status">pointer tracking — move over the canvas</div>
+
+<script src="js/guard.js"></script>
+
+<script type="module">
+  import { Tulle, imageToSplat, encodeSplat } from '../src/ready.js'
+
+  const $ = id => document.getElementById(id)
+  const status = msg => { $('status').textContent = msg }
+  const tulle = new Tulle($('canvas'))
+
+  // ── A generated scene: no files needed ───────────────────────────────────────
+  // SplatData is just typed arrays. Objects sit in front of, on, and behind the
+  // focus plane (z = 0, the camera's target) so the parallax reads clearly.
+  function generated() {
+    const pos = [], col = [], scl = []
+    const add = (x, y, z, r, g, b, s, a = 1) => { pos.push(x, y, z); col.push(r, g, b, a * 255); scl.push(s, s, s) }
+    const rand = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647) })()
+
+    // Floor grid, receding far behind the glass.
+    for (let x = -6; x <= 6; x += 0.25)
+      for (let z = -14; z <= 3; z += 0.25)
+        add(x, -1.6, z, 40, 46 + 20 * ((Math.round(x * 4) + Math.round(z * 4)) & 1), 90, 0.05, 0.9)
+
+    // A torus knot on the focus plane — it stays put on screen while you move.
+    for (let i = 0; i < 6000; i++) {
+      const t = i / 6000 * Math.PI * 2, p = 2, q = 3
+      const r = 0.8 + 0.3 * Math.cos(q * t)
+      const h = i / 6000
+      add(r * Math.cos(p * t) + (rand() - 0.5) * 0.06, r * Math.sin(p * t) + (rand() - 0.5) * 0.06,
+          0.3 * Math.sin(q * t), 255, 84 + 120 * h, 112 + 100 * (1 - h), 0.035)
+    }
+
+    // Spheres at assorted depths: near ones pop out of the glass, far ones recede.
+    const spheres = [[-2.6, 0.6, 2.2, [76, 201, 240]], [2.4, -0.4, 1.6, [255, 209, 102]],
+                     [-1.8, 0.2, -5, [6, 214, 160]], [2.2, 0.9, -8, [131, 103, 199]], [0, 1.4, -12, [239, 71, 111]]]
+    for (const [cx, cy, cz, [r, g, b]] of spheres)
+      for (let i = 0; i < 1500; i++) {
+        const u = rand() * 2 - 1, a = rand() * Math.PI * 2, s = Math.sqrt(1 - u * u)
+        const shade = 0.55 + 0.45 * Math.max(0, s * Math.cos(a) * 0.5 + u * 0.7)
+        add(cx + 0.5 * s * Math.cos(a), cy + 0.5 * u, cz + 0.5 * s * Math.sin(a), r * shade, g * shade, b * shade, 0.04)
+      }
+
+    // A drift of stars far back.
+    for (let i = 0; i < 2500; i++) add((rand() - 0.5) * 60, rand() * 20 - 3, -30 - rand() * 20, 220, 220, 255, 0.04 + rand() * 0.05, 0.8)
+
+    return { positions: new Float32Array(pos), colors: new Uint8Array(col), scales: new Float32Array(scl) }
+  }
+  const GENERATED_CAMERA = { position: [0, 0, 6], target: [0, 0, 0], up: [0, 1, 0], fov: 50 }
+
+  let head = null
+  const trackingLabel = () => head?.source === 'webcam'
+    ? (head.tracking ? 'tracking your head' : 'looking for a face…')
+    : 'pointer tracking — move over the canvas'
+
+  const scene = tulle.splat(generated(), { camera: GENERATED_CAMERA, background: [0.02, 0.02, 0.05, 1] })
+  scene.on('progress', ({ loaded, total }) => status(`loading… ${Math.round(loaded / total * 100)}%`))
+  scene.on('ready', ({ count }) => status(`${count.toLocaleString()} splats — ${trackingLabel()}`))
+  scene.on('error', err => status(`couldn't load: ${err.message}`))
+
+  tulle.composite([{ source: scene }])
+       .post([{ name: 'vignette', params: { amount: 0.35 } }, { name: 'grain', params: { amount: 0.03 } }])
+       .play()
+
+  // ── Head tracking ───────────────────────────────────────────────────────────
+  head = tulle.head({ source: 'pointer' })
+  await head.start()
+  scene.track(head)
+
+  const press = (on, ...off) => { $(on).setAttribute('aria-pressed', 'true'); off.forEach(id => $(id).setAttribute('aria-pressed', 'false')) }
+
+  async function useTracker(source) {
+    head.destroy()
+    head = tulle.head({ source })
+    head.on('found', () => status('tracking your head — move around'))
+    head.on('lost',  () => status('lost your face — easing back to centre'))
+    head.on('fallback', err => { status(`camera unavailable (${err.message}) — using the pointer`); press('pointer', 'webcam') })
+    if (source === 'webcam') status('starting camera and face model…')
+    await head.start()
+    scene.track(head)
+
+    const preview = $('preview')
+    if (head.video) { preview.srcObject = head.video.srcObject; preview.style.display = 'block'; preview.play() }
+    else { preview.srcObject = null; preview.style.display = 'none' }
+    if (head.source === 'pointer') status(trackingLabel())
+  }
+
+  $('webcam').onclick  = () => { press('webcam', 'pointer'); useTracker('webcam') }
+  $('pointer').onclick = () => { press('pointer', 'webcam'); useTracker('pointer') }
+  $('recenter').onclick = () => head.recenter()
+  $('parallax').oninput = e => {
+    scene.parallax = +e.target.value
+    $('parallax-val').textContent = (+e.target.value).toFixed(2)
+  }
+
+  // ── Scenes ──────────────────────────────────────────────────────────────────
+  // Captured scenes come out of COLMAP y-down. fit() frames an unknown one from
+  // its bounds; for a capture you know, a viewpoint near the training cameras
+  // looks far better — this one faces the locomotive head-on.
+  const TRAIN_CAMERA = { position: [-5.8, -0.15, -3.0], target: [0, 0, 0], up: [0, -1, 0], fov: 50 }
+
+  $('procedural').onclick = async () => {
+    press('procedural', 'sample')
+    made = null
+    scene.camera = GENERATED_CAMERA
+    await scene.load(generated())
+  }
+  $('sample').onclick = async () => {
+    press('sample', 'procedural')
+    made = null
+    scene.camera = TRAIN_CAMERA
+    await scene.load('https://huggingface.co/cakewalk/splat-data/resolve/main/train.splat')
+  }
+  $('file').onchange = e => {
+    const file = e.target.files[0]
+    e.target.value = ''
+    if (file) open(file).catch(err => status(`couldn't open ${file.name}: ${err.message}`))
+  }
+
+  // ── Image → splat ───────────────────────────────────────────────────────────
+  // A photo becomes splats via imageToSplat(): estimated depth, one gaussian per
+  // pixel. It hands back a camera that reproduces the photo's framing exactly,
+  // with the median depth on the glass — so leaning reveals depth around it.
+  let made = null // the last image's SplatData, for download
+
+  async function open(file) {
+    for (const id of ['procedural', 'sample']) $(id).setAttribute('aria-pressed', 'false')
+    made = null
+    $('download').disabled = true
+    if (!file.type.startsWith('image/')) {
+      status(`parsing ${file.name}…`)
+      await scene.load(file)
+      scene.fit()
+      return
+    }
+
+    // Model download reports per file; once a file completes, inference is what's running.
+    const onProgress = ({ stage, loaded, total }) => status(
+      stage === 'model' && total && loaded < total ? `downloading depth model (first time only)… ${Math.round(loaded / total * 100)}%`
+      : stage === 'build' ? 'lifting pixels into splats…'
+      : `estimating depth for ${file.name}…`)
+
+    let result, flat = null
+    try {
+      result = await imageToSplat(file, { onProgress })
+    } catch (err) {
+      console.error(err)
+      flat = err
+      result = await imageToSplat(file, { depth: 'flat' })
+    }
+    made = { data: result.data, name: file.name.replace(/\.[^.]+$/, '') + '.splat' }
+    scene.camera = result.camera
+    await scene.load(result.data)
+    head.recenter()
+    $('download').disabled = false
+    if (flat) status(`depth model unavailable (${flat.message}) — showing a flat card instead`)
+  }
+
+  $('download').onclick = () => {
+    if (!made) return
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([encodeSplat(made.data)], { type: 'application/octet-stream' }))
+    a.download = made.name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  }
+
+  const stage = document.querySelector('.stage')
+
+  // ── Fullscreen ──────────────────────────────────────────────────────────────
+  // Render at the screen's resolution rather than upscaling 960×540: resize the
+  // canvas and the splat surface together (the window camera takes its aspect
+  // from the surface), and put them back on the way out.
+  const canvas = $('canvas')
+  const windowed = { width: canvas.width, height: canvas.height }
+  const resizeTo = (w, h) => {
+    canvas.width = w; canvas.height = h
+    scene.resize(w, h)
+  }
+  const fitScreen = () => {
+    const dpr = Math.min(devicePixelRatio || 1, 2)
+    const scale = Math.min(dpr, 2560 / stage.clientWidth) // cap the pixel count on huge displays
+    resizeTo(Math.round(stage.clientWidth * scale), Math.round(stage.clientHeight * scale))
+  }
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen()
+    else (stage.requestFullscreen ?? stage.webkitRequestFullscreen)?.call(stage)
+  }
+  $('fullscreen').onclick = toggleFullscreen
+  addEventListener('keydown', e => { if (e.key === 'f' && !e.target.closest('input')) toggleFullscreen() })
+  document.addEventListener('fullscreenchange', () => {
+    const on = document.fullscreenElement === stage
+    $('fullscreen').textContent = on ? '✕ exit fullscreen' : '⛶ fullscreen'
+    if (on) fitScreen()
+    else resizeTo(windowed.width, windowed.height)
+  })
+  addEventListener('resize', () => { if (document.fullscreenElement === stage) fitScreen() })
+
+  // Drop anywhere on the page; highlight the stage while dragging.
+  let depth = 0
+  addEventListener('dragenter', e => { e.preventDefault(); if (depth++ === 0) stage.classList.add('dragging') })
+  addEventListener('dragleave', () => { if (--depth === 0) stage.classList.remove('dragging') })
+  addEventListener('dragover',  e => e.preventDefault())
+  addEventListener('drop', e => {
+    e.preventDefault()
+    depth = 0
+    stage.classList.remove('dragging')
+    const file = e.dataTransfer.files[0]
+    if (file) open(file).catch(err => status(`couldn't open ${file.name}: ${err.message}`))
+  })
+</script>
+
+</body>
+</html>

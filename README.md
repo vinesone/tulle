@@ -40,7 +40,9 @@ framebuffer, and event listener is released. You never call `destroy()`.
 - **[Compositing](guide/compositing.md)** — layers with blend modes,
   transforms, CSS-like flow layout, and scrolling compositions.
 - **[Sources](guide/sources.md)** — video clips with lifecycle events and
-  timeline cues, typeset text, canvas drawing, dithered gradients.
+  timeline cues, typeset text, canvas drawing, dithered gradients, and
+  **3D Gaussian Splatting** scenes you look around by moving your head —
+  including ones made from a single photo.
 - **[Rendering](guide/rendering.md)** — transparency, deterministic
   frame-exact rendering and WebM export, lifecycle.
 
@@ -79,6 +81,8 @@ npm run dev     # http://localhost:8080/examples/
   analog chain with the `vhs` effect. Whack the VCR.
 - **explode** — click to melt and explode the text, click again to reassemble.
 - **export** — deterministic frame-exact rendering out to a WebM file.
+- **splat** — a Gaussian splat scene behind a head-tracked "window": turn on
+  the webcam and lean around it. Drop a photo to turn it into a splat.
 - **custom effect** — write your own: a fragment shader plus a defaults object.
 
 ## License
